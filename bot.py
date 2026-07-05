@@ -27,6 +27,7 @@ OTP_POLL_DELAY = 6
 
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.json")
 TOKEN_FILE  = os.path.join(SCRIPT_DIR, "token.json")
+STATE_FILE  = os.path.join(SCRIPT_DIR, "claim_state.json")
 
 # ─── Colors ───────────────────────────────────────────────────────────────────
 class C:
@@ -76,6 +77,39 @@ def load_tokens():
         return data.get("access"), data.get("refresh")
     except (FileNotFoundError, json.JSONDecodeError):
         return None, None
+
+# ─── Claim state (actual claim amounts, not theoretical rates) ──────────────────
+def save_claim_state(claimed=None, balance=None):
+    """Save actual claim amount so dashboard shows real per-claim / per-day."""
+    state = load_claim_state()
+    if claimed is not None:
+        state["last_claim"] = claimed
+        state["history"] = (state.get("history", []) + [claimed])[-10:]
+    if balance is not None:
+        state["balance"] = balance
+    state["updated_at"] = int(time.time())
+    try:
+        with open(STATE_FILE, "w") as f:
+            json.dump(state, f, indent=2)
+        os.chmod(STATE_FILE, 0o600)
+    except Exception:
+        pass
+
+def load_claim_state():
+    try:
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"history": [], "last_claim": 0, "balance": 0}
+
+def get_actual_rate(state):
+    """Compute actual per-claim and per-day from claim history."""
+    history = state.get("history", [])
+    if not history:
+        return 0, 0  # per_claim, per_day
+    avg = sum(history) / len(history)
+    per_day = avg * 6  # 6 cycles per day (4h each)
+    return round(avg, 1), round(per_day, 1)
 
 def jwt_exp(token):
     try:
@@ -326,18 +360,25 @@ def fmt_pad(text, width):
     clean = _re.sub(r'\033\[[0-9;]*m', '', str(text))
     return str(text) + " " * max(0, width - len(clean))
 
-def get_rates(ti):
-    """Extract all rate info from token data."""
+def get_rates(ti, state=None):
+    """Extract rate info. Uses actual claim history if available, falls back to API rates."""
     mining     = ti.get("dailyMiningRate", 0) or 0
     grp_rate   = ti.get("groupMiningRate", 0) or 0
     ref_dir    = ti.get("directReferralsHashRate", 0) or 0
     ref_ind    = ti.get("indirectReferralsHashRate", 0) or 0
     total_rate = mining + grp_rate + ref_dir + ref_ind
     rate_4h    = round(total_rate / 6, 2) if total_rate else 0
+    # Actual claim amounts from history (what you really get)
+    actual_per_claim, actual_per_day = (0, 0)
+    if state:
+        actual_per_claim, actual_per_day = get_actual_rate(state)
     return {
         "mining": mining, "group": grp_rate,
         "ref_dir": ref_dir, "ref_ind": ref_ind,
         "total": total_rate, "rate_4h": rate_4h,
+        "actual_per_claim": actual_per_claim,
+        "actual_per_day": actual_per_day,
+        "has_history": actual_per_claim > 0,
     }
 
 def show_dashboard(token, device_id):
@@ -348,7 +389,8 @@ def show_dashboard(token, device_id):
     ui = data.get("userInfo", {})
     ti = data.get("token", {})
     ic = data.get("isClaimable", {})
-    rates = get_rates(ti)
+    state = load_claim_state()
+    rates = get_rates(ti, state)
     gold        = ti.get("interlinkGoldTokenAmount", 0)
     total_ref   = ti.get("totalReferral", 0)
     streak      = ti.get("burningStreak", 0)
@@ -361,14 +403,19 @@ def show_dashboard(token, device_id):
     print(f"  {C.B}║{C.R}  {ui.get('username', 'N/A')[:30]:<34}  {C.B}║{C.R}")
     print(f"  {C.B}╠{'═'*W}╣{C.R}")
     print(f"  {C.B}║{C.R}  ITLG Balance   {str(gold):>28}  {C.B}║{C.R}")
-    print(f"  {C.B}║{C.R}  Mining         {str(rates['mining']) + '/day':>28}  {C.B}║{C.R}")
+    print(f"  {C.B}║{C.R}  Last claim     {str(state.get('last_claim', 0)) + ' ITLG':>28}  {C.B}║{C.R}")
+    # Show ACTUAL rate (what you really get per claim / per day)
+    if rates["has_history"]:
+        print(f"  {C.B}║{C.R}  Per claim      {str(rates['actual_per_claim']) + ' ITLG':>28}  {C.B}║{C.R}")
+        print(f"  {C.B}║{C.R}  Per day        {str(rates['actual_per_day']) + ' ITLG':>28}  {C.B}║{C.R}")
+    else:
+        print(f"  {C.B}║{C.R}  Per claim      {'~17 ITLG (est)':>28}  {C.B}║{C.R}")
+        print(f"  {C.B}║{C.R}  Per day        {'~102 ITLG (est)':>28}  {C.B}║{C.R}")
     if has_group:
         print(f"  {C.B}║{C.R}  Group          {str(rates['group']) + '/day':>28}  {C.B}║{C.R}")
     else:
         print(f"  {C.B}║{C.R}  Group          {'inactive':>28}  {C.B}║{C.R}")
-    print(f"  {C.B}║{C.R}  Referral       {str(rates['ref_dir'] + rates['ref_ind']) + f' ({total_ref} refs)':>28}  {C.B}║{C.R}")
-    print(f"  {C.B}║{C.R}  Total          {str(round(rates['total'], 2)) + '/day':>28}  {C.B}║{C.R}")
-    print(f"  {C.B}║{C.R}  Per 4h cycle   {str(rates['rate_4h']):>28}  {C.B}║{C.R}")
+    print(f"  {C.B}║{C.R}  Referral       {str(round(rates['ref_dir'] + rates['ref_ind'], 2)) + f' ({total_ref} refs)':>28}  {C.B}║{C.R}")
     print(f"  {C.B}║{C.R}  Streak/Burned  {f'{streak} / {burned}':>28}  {C.B}║{C.R}")
     if recoverable and recoverable > 0:
         print(f"  {C.B}║{C.R}  Recoverable    {str(recoverable) + ' ITLG':>28}  {C.B}║{C.R}")
@@ -423,17 +470,23 @@ def attempt_claim(cfg, token):
         claimed = None
         if balance_before is not None and balance_after is not None:
             claimed = balance_after - balance_before
-        rates = get_rates(ti)
+        rates = get_rates(ti, load_claim_state())
+        # Save actual claim to state
+        save_claim_state(claimed=claimed, balance=balance_after)
         log("ok", f"Claimed! +{claimed if claimed is not None else '?'} ITLG")
         log("info", f"Balance: {balance_before} → {balance_after} ITLG")
-        log("info", f"Rate per 4h: {rates['rate_4h']} | Total: {rates['total']}/day")
+        if rates["has_history"]:
+            log("info", f"Avg per claim: {rates['actual_per_claim']} | Per day: {rates['actual_per_day']} ITLG")
+        else:
+            log("info", f"First claim recorded: {claimed} ITLG")
         # Telegram notification
         try:
             send_telegram_notif(cfg, {
                 "claimed": claimed,
                 "before": balance_before,
                 "after": balance_after,
-                "rate_4h": rates["rate_4h"],
+                "rate_per_claim": rates["actual_per_claim"] if rates["has_history"] else claimed,
+                "rate_per_day": rates["actual_per_day"] if rates["has_history"] else None,
                 "total_rate": rates["total"],
             })
         except Exception as e:
@@ -450,14 +503,16 @@ def attempt_claim(cfg, token):
         if result2.get("statusCode") == 200:
             balance_after = get_balance(token, device_id)
             claimed = (balance_after - balance_before) if balance_before is not None and balance_after is not None else None
-            rates = get_rates(ti)
+            rates = get_rates(ti, load_claim_state())
+            save_claim_state(claimed=claimed, balance=balance_after)
             log("ok", f"Claimed on retry! +{claimed if claimed is not None else '?'} ITLG")
             try:
                 send_telegram_notif(cfg, {
                     "claimed": claimed,
                     "before": balance_before,
                     "after": balance_after,
-                    "rate_4h": rates["rate_4h"],
+                    "rate_per_claim": rates["actual_per_claim"] if rates["has_history"] else claimed,
+                    "rate_per_day": rates["actual_per_day"] if rates["has_history"] else None,
                     "total_rate": rates["total"],
                 })
             except Exception:
@@ -480,14 +535,15 @@ def send_telegram_notif(cfg, info):
     claimed = info.get("claimed")
     before = info.get("before")
     after = info.get("after")
-    rate_4h = info.get("rate_4h", 0)
-    total_rate = info.get("total_rate", 0)
+    rate_per_claim = info.get("rate_per_claim", 0)
+    rate_per_day = info.get("rate_per_day")
     now = datetime.now().strftime("%H:%M:%S")
+    day_line = f"\n📈 Per day: ~{rate_per_day} ITLG (6 claims)" if rate_per_day else ""
     text = (
         f"✅ ITLG Claim Success\n\n"
         f"💰 Claimed: +{claimed} ITLG\n"
         f"📊 Balance: {before} → {after} ITLG\n"
-        f"⏱️ Rate: {rate_4h}/4h ({total_rate}/day)\n"
+        f"⏱️ Per claim: {rate_per_claim} ITLG{day_line}\n"
         f"🕐 {now}\n\n"
         f"Next claim in 4h."
     )

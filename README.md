@@ -41,32 +41,32 @@ If you skip the Telegram fields, the bot still works fine — it just won't send
 python bot.py
 ```
 
-That's it. The bot logs in via OTP once, saves the token, and stays running. It reads the next claim time from the API and shows a live countdown:
+That's it. The bot logs in via OTP once, saves the token, and stays running. It reads the next claim time from the API and shows a live countdown. When the timer hits zero, it claims automatically.
 
 ```
   ╔══════════════════════════════════════╗
   ║  username                              ║
   ╠══════════════════════════════════════╣
   ║  ITLG Balance                         609  ║
-  ║  Mining                          0.17/day  ║
+  ║  Last claim                          17 ITLG  ║
+  ║  Per claim                         17.0 ITLG  ║
+  ║  Per day                          102.0 ITLG  ║
   ║  Group                           inactive  ║
-  ║  Referral                   1.7 (7 refs)  ║
-  ║  Total                           1.87/day  ║
-  ║  Per 4h cycle                         0.31  ║
+  ║  Referral                    1.9 (8 refs)  ║
   ║  Streak/Burned                    0 / 511  ║
   ║  Recoverable                   10502 ITLG  ║
   ╚══════════════════════════════════════╝
 ⏰ Next claim in 03h 52m 10s
 ```
 
-When the timer hits zero, it claims automatically. The dashboard shows:
+The dashboard tracks your **actual claim history** — what you really get per claim and per day, not theoretical rates:
 
 - **ITLG Balance** — your current mined balance
-- **Mining** — your solo daily mining rate
+- **Last claim** — how much you got from the most recent claim
+- **Per claim** — average ITLG per claim (from your actual claim history)
+- **Per day** — estimated daily earnings (per claim × 6 cycles per day)
 - **Group** — group mining rate (shows "inactive" until you create a group in the app)
 - **Referral** — combined direct + indirect referral rate and your referrer count
-- **Total** — sum of all rates (mining + group + referral)
-- **Per 4h cycle** — what you actually get per claim (total ÷ 6)
 - **Streak/Burned** — your current burning streak and total burned cycles
 - **Recoverable** — ITLG locked in burned cycles that can be recovered later
 
@@ -75,7 +75,7 @@ On a successful claim, you'll see:
 ```
 ✅ Claimed! +17 ITLG
 ℹ️ Balance: 592 → 609 ITLG
-ℹ️ Rate per 4h: 0.31 | Total: 1.87/day
+ℹ️ Avg per claim: 17.0 | Per day: 102.0 ITLG
 ```
 
 And if Telegram is configured, you get a push notification with the same info.
@@ -153,6 +153,7 @@ config.json           # your config (gitignored)
 config.json.example   # template
 token.json            # saved token (gitignored, auto-created)
 token-backup.json     # backup copy (gitignored, auto-created)
+claim_state.json      # actual claim history for rate display (gitignored, auto-created)
 ```
 
 ## Notes

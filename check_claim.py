@@ -26,6 +26,37 @@ APP_VER    = "5.0.0"
 
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.json")
 TOKEN_FILE  = os.path.join(SCRIPT_DIR, "token.json")
+STATE_FILE  = os.path.join(SCRIPT_DIR, "claim_state.json")
+
+
+def save_claim_state(claimed=None, balance=None):
+    state = load_claim_state()
+    if claimed is not None:
+        state["last_claim"] = claimed
+        state["history"] = (state.get("history", []) + [claimed])[-10:]
+    if balance is not None:
+        state["balance"] = balance
+    state["updated_at"] = int(time.time())
+    try:
+        with open(STATE_FILE, "w") as f:
+            json.dump(state, f, indent=2)
+        os.chmod(STATE_FILE, 0o600)
+    except Exception:
+        pass
+
+def load_claim_state():
+    try:
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"history": [], "last_claim": 0, "balance": 0}
+
+def get_actual_rate(state):
+    history = state.get("history", [])
+    if not history:
+        return 0, 0
+    avg = sum(history) / len(history)
+    return round(avg, 1), round(avg * 6, 1)
 
 
 def headers(token=None, device_id=None):
@@ -158,18 +189,6 @@ def trigger_ads(token, device_id, last_claim):
     return 10
 
 
-def get_rates(ti):
-    mining   = ti.get("dailyMiningRate", 0) or 0
-    grp      = ti.get("groupMiningRate", 0) or 0
-    ref_dir  = ti.get("directReferralsHashRate", 0) or 0
-    ref_ind  = ti.get("indirectReferralsHashRate", 0) or 0
-    total    = mining + grp + ref_dir + ref_ind
-    return {
-        "total": total,
-        "rate_4h": round(total / 6, 2) if total else 0,
-    }
-
-
 def send_telegram(cfg, text):
     bot_token = cfg.get("tgBotToken")
     chat_id = cfg.get("tgChatId")
@@ -184,7 +203,6 @@ def send_telegram(cfg, text):
                       timeout=10, verify=False)
     except Exception:
         pass
-
 
 def main():
     cfg = load_config()
@@ -219,14 +237,17 @@ def main():
         user2 = get_user_info(token, device_id)
         balance_after = user2.get("token", {}).get("interlinkGoldTokenAmount", 0) if user2 else 0
         claimed = balance_after - balance_before
-        rates = get_rates(ti)
+        save_claim_state(claimed=claimed, balance=balance_after)
+        state = load_claim_state()
+        per_claim, per_day = get_actual_rate(state)
         now = datetime.now().strftime("%H:%M:%S")
+        day_line = f"\n📈 Per day: ~{per_day} ITLG (6 claims)" if per_day else ""
         # This goes to stdout → cron delivers to Telegram
         print(
             f"✅ ITLG Claim Success\n\n"
             f"💰 Claimed: +{claimed} ITLG\n"
             f"📊 Balance: {balance_before} → {balance_after} ITLG\n"
-            f"⏱️ Rate: {rates['rate_4h']}/4h ({rates['total']}/day)\n"
+            f"⏱️ Per claim: {per_claim} ITLG{day_line}\n"
             f"🕐 {now}\n\n"
             f"Next claim in 4h."
         )
@@ -235,7 +256,7 @@ def main():
             f"✅ ITLG Claim Success\n\n"
             f"💰 Claimed: +{claimed} ITLG\n"
             f"📊 Balance: {balance_before} → {balance_after} ITLG\n"
-            f"⏱️ Rate: {rates['rate_4h']}/4h ({rates['total']}/day)\n"
+            f"⏱️ Per claim: {per_claim} ITLG{day_line}\n"
             f"🕐 {now}\n\n"
             f"Next claim in 4h."
         ))

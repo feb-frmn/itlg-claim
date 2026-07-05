@@ -1,6 +1,7 @@
 config.json
 token.json
 token-backup.json
+claim_state.json
 accounts.json
 tokens/
 *.log
@@ -11,4 +12,3 @@ __pycache__/
 *.pyc
 .venv/
 node_modules/
-token-backup.json
