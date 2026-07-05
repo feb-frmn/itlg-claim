@@ -1,7 +1,10 @@
 {
-  "loginId": "123456",
-  "passcode": "000000",
-  "email": "your-email@gmail.com",
-  "imapPassword": "your-gmail-app-password",
-  "deviceId": ""
+  "loginId": "",
+  "passcode": "",
+  "email": "",
+  "imapPassword": "",
+
+  "deviceId": "",
+  "tgBotToken": "",
+  "tgChatId": ""
 }
