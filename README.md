@@ -2,7 +2,7 @@
 
 Auto-claim $ITLG from Interlink Labs. Every 4 hours, no manual clicking.
 
-Single Python script. Login once with IMAP OTP, then it claims forever. The bot knows when your next claim is available and counts down automatically — just leave it running.
+Single Python script. Login once with IMAP OTP, then it claims forever. The bot knows when your next claim is available and counts down automatically — just leave it running. Optional Telegram notifications when a claim succeeds.
 
 ## Setup
 
@@ -19,7 +19,9 @@ Edit `config.json`:
   "passcode": "000000",
   "email": "your-email@gmail.com",
   "imapPassword": "your gmail app password",
-  "deviceId": ""
+  "deviceId": "",
+  "tgBotToken": "",
+  "tgChatId": ""
 }
 ```
 
@@ -28,6 +30,10 @@ Edit `config.json`:
 - `email` — the email registered to your Interlink account
 - `imapPassword` — Gmail App Password ([get one here](https://myaccount.google.com/apppasswords), not your Gmail password)
 - `deviceId` — leave empty, it auto-generates
+- `tgBotToken` — optional, Telegram bot token for push notifications
+- `tgChatId` — optional, your Telegram chat ID for notifications
+
+If you skip the Telegram fields, the bot still works fine — it just won't send push notifications. You'll still see everything in the console.
 
 ## Run
 
@@ -38,25 +44,72 @@ python bot.py
 That's it. The bot logs in via OTP once, saves the token, and stays running. It reads the next claim time from the API and shows a live countdown:
 
 ```
-  ⏰ Next claim in 03h 52m 10s
+  ╔══════════════════════════════════════╗
+  ║  username                              ║
+  ╠══════════════════════════════════════╣
+  ║  ITLG Balance                         609  ║
+  ║  Mining                          0.17/day  ║
+  ║  Group                           inactive  ║
+  ║  Referral                   1.7 (7 refs)  ║
+  ║  Total                           1.87/day  ║
+  ║  Per 4h cycle                         0.31  ║
+  ║  Streak/Burned                    0 / 511  ║
+  ║  Recoverable                   10502 ITLG  ║
+  ╚══════════════════════════════════════╝
+⏰ Next claim in 03h 52m 10s
 ```
 
-When the timer hits zero, it claims automatically and resets the countdown.
+When the timer hits zero, it claims automatically. The dashboard shows:
+
+- **ITLG Balance** — your current mined balance
+- **Mining** — your solo daily mining rate
+- **Group** — group mining rate (shows "inactive" until you create a group in the app)
+- **Referral** — combined direct + indirect referral rate and your referrer count
+- **Total** — sum of all rates (mining + group + referral)
+- **Per 4h cycle** — what you actually get per claim (total ÷ 6)
+- **Streak/Burned** — your current burning streak and total burned cycles
+- **Recoverable** — ITLG locked in burned cycles that can be recovered later
+
+On a successful claim, you'll see:
+
+```
+✅ Claimed! +17 ITLG
+ℹ️ Balance: 592 → 609 ITLG
+ℹ️ Rate per 4h: 0.31 | Total: 1.87/day
+```
+
+And if Telegram is configured, you get a push notification with the same info.
 
 ## Options
 
 ```
-python bot.py          # run with live countdown timer
+python bot.py          # run with live countdown timer (default)
 python bot.py --once   # single run, check + claim if available, then exit
 python bot.py --login  # force re-login (get new OTP)
 ```
 
+## Cron Mode (No-Agent Watchdog)
+
+For set-and-forget auto-claiming without keeping the bot running, use `check_claim.py` with cron:
+
+```bash
+*/5 * * * * cd /path/to/interlink-bot && python3 check_claim.py
+```
+
+The checker is **silent when there's nothing to claim** — it produces no output, so your cron inbox stays clean. When a claim succeeds, it prints the notification to stdout (ideal for cron delivery or piping to a notifier). It also sends directly to Telegram if `tgBotToken` + `tgChatId` are set in config.
+
+Manual test:
+```bash
+python check_claim.py   # prints claim result if claimable, silent otherwise
+```
+
 ## Saving Your Token
 
-After your first login, the bot saves your token to `token.json`. This file lets you claim without logging in again. Keep a backup somewhere safe — if you lose it, you'll need to re-login via OTP.
+After your first login, the bot saves your token to `token.json` (and `token-backup.json` as a backup). This file lets you claim without logging in again. Keep a copy somewhere safe — if you lose both, you'll need to re-login via OTP.
 
 **Backup:**
 ```bash
+# already done automatically as token-backup.json, but you can copy it elsewhere:
 cp token.json ~/token-backup.json
 ```
 
@@ -94,10 +147,12 @@ You're mining **ITLG**.
 ## Files
 
 ```
-bot.py              # the bot
-config.json         # your config (gitignored)
-config.json.example # template
-token.json          # saved token (gitignored, auto-created)
+bot.py                # the bot (loop mode + --once + --login)
+check_claim.py        # cron checker (silent if nothing to claim, prints on success)
+config.json           # your config (gitignored)
+config.json.example   # template
+token.json            # saved token (gitignored, auto-created)
+token-backup.json     # backup copy (gitignored, auto-created)
 ```
 
 ## Notes
@@ -105,6 +160,8 @@ token.json          # saved token (gitignored, auto-created)
 - Your token is saved locally with `chmod 600`. Don't share `config.json` or `token.json`.
 - If OTP doesn't arrive, the bot resends automatically (up to 3 times).
 - No multi-account, no proxy rotation, no Node.js. One script, one account, one dependency.
+- Group mining rate is 0 until you create a group in the Interlink app. Once active, it shows automatically.
+- `burnedCycles` and `itlgRecoverable` are display-only — the API has no recovery endpoint yet. Recover through the app when available.
 
 ## License
 

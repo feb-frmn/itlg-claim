@@ -319,6 +319,27 @@ def claim_airdrop(token, device_id):
     return r.json()
 
 # ─── Display ──────────────────────────────────────────────────────────────────
+def fmt_pad(text, width):
+    """Pad text to width, handling emoji width issues."""
+    # Strip ANSI codes for length calc
+    import re as _re
+    clean = _re.sub(r'\033\[[0-9;]*m', '', str(text))
+    return str(text) + " " * max(0, width - len(clean))
+
+def get_rates(ti):
+    """Extract all rate info from token data."""
+    mining     = ti.get("dailyMiningRate", 0) or 0
+    grp_rate   = ti.get("groupMiningRate", 0) or 0
+    ref_dir    = ti.get("directReferralsHashRate", 0) or 0
+    ref_ind    = ti.get("indirectReferralsHashRate", 0) or 0
+    total_rate = mining + grp_rate + ref_dir + ref_ind
+    rate_4h    = round(total_rate / 6, 2) if total_rate else 0
+    return {
+        "mining": mining, "group": grp_rate,
+        "ref_dir": ref_dir, "ref_ind": ref_ind,
+        "total": total_rate, "rate_4h": rate_4h,
+    }
+
 def show_dashboard(token, device_id):
     data = get_user_info(token, device_id)
     if not data:
@@ -327,29 +348,31 @@ def show_dashboard(token, device_id):
     ui = data.get("userInfo", {})
     ti = data.get("token", {})
     ic = data.get("isClaimable", {})
-    gold     = ti.get("interlinkGoldTokenAmount", 0)
-    rate     = ti.get("dailyMiningRate", 0)
-    grp_rate = ti.get("groupMiningRate", 0)
-    ref_dir  = ti.get("directReferralsHashRate", 0)
-    ref_ind  = ti.get("indirectReferralsHashRate", 0)
-    base     = ti.get("baseReward", 0)
-    mult     = ti.get("multiplierBaseRate", 0)
-    streak   = ti.get("burningStreak", 0)
-    burned   = ti.get("burnedCycles", 0)
-    total_rate = rate + grp_rate + ref_dir + ref_ind
+    rates = get_rates(ti)
+    gold        = ti.get("interlinkGoldTokenAmount", 0)
+    total_ref   = ti.get("totalReferral", 0)
+    streak      = ti.get("burningStreak", 0)
+    burned      = ti.get("burnedCycles", 0)
+    recoverable = ti.get("itlgRecoverable", 0)
+    has_group   = rates["group"] > 0
+    W = 38
     print()
-    print(f"  {C.B}┌──────────────────────────────────────┐{C.R}")
-    print(f"  {C.B}│{C.R}  {ui.get('username', 'N/A'):<24}            {C.B}│{C.R}")
-    print(f"  {C.B}├──────────────────────────────────────┤{C.R}")
-    print(f"  {C.B}│{C.R}  ITLG Balance: {str(gold):<20}       {C.B}│{C.R}")
-    print(f"  {C.B}│{C.R}  Mining rate: {str(rate):<21}       {C.B}│{C.R}")
-    if grp_rate > 0:
-        print(f"  {C.B}│{C.R}  Group rate:  {str(grp_rate):<21}       {C.B}│{C.R}")
-    print(f"  {C.B}│{C.R}  Referral:    {str(ref_dir):<21}       {C.B}│{C.R}")
-    print(f"  {C.B}│{C.R}  Total rate:  {str(round(total_rate, 2)):<21}       {C.B}│{C.R}")
-    print(f"  {C.B}│{C.R}  Base: {str(base)}  Mult: {str(mult):<15}       {C.B}│{C.R}")
-    print(f"  {C.B}│{C.R}  Streak: {str(streak)}  Burned: {str(burned):<12}       {C.B}│{C.R}")
-    print(f"  {C.B}└──────────────────────────────────────┘{C.R}")
+    print(f"  {C.B}╔{'═'*W}╗{C.R}")
+    print(f"  {C.B}║{C.R}  {ui.get('username', 'N/A')[:30]:<34}  {C.B}║{C.R}")
+    print(f"  {C.B}╠{'═'*W}╣{C.R}")
+    print(f"  {C.B}║{C.R}  ITLG Balance   {str(gold):>28}  {C.B}║{C.R}")
+    print(f"  {C.B}║{C.R}  Mining         {str(rates['mining']) + '/day':>28}  {C.B}║{C.R}")
+    if has_group:
+        print(f"  {C.B}║{C.R}  Group          {str(rates['group']) + '/day':>28}  {C.B}║{C.R}")
+    else:
+        print(f"  {C.B}║{C.R}  Group          {'inactive':>28}  {C.B}║{C.R}")
+    print(f"  {C.B}║{C.R}  Referral       {str(rates['ref_dir'] + rates['ref_ind']) + f' ({total_ref} refs)':>28}  {C.B}║{C.R}")
+    print(f"  {C.B}║{C.R}  Total          {str(round(rates['total'], 2)) + '/day':>28}  {C.B}║{C.R}")
+    print(f"  {C.B}║{C.R}  Per 4h cycle   {str(rates['rate_4h']):>28}  {C.B}║{C.R}")
+    print(f"  {C.B}║{C.R}  Streak/Burned  {f'{streak} / {burned}':>28}  {C.B}║{C.R}")
+    if recoverable and recoverable > 0:
+        print(f"  {C.B}║{C.R}  Recoverable    {str(recoverable) + ' ITLG':>28}  {C.B}║{C.R}")
+    print(f"  {C.B}╚{'═'*W}╝{C.R}")
     return ic, ti
 
 def format_countdown(seconds):
@@ -358,7 +381,14 @@ def format_countdown(seconds):
     s = int(seconds % 60)
     return f"{h:02d}h {m:02d}m {s:02d}s"
 
-# ─── Claim logic ──────────────────────────────────────────────────────────────
+# ─── Claim ─────────────────────────────────────────────────────────────────────
+def get_balance(token, device_id):
+    """Get current ITLG balance."""
+    data = get_user_info(token, device_id)
+    if data:
+        return data.get("token", {}).get("interlinkGoldTokenAmount", 0)
+    return None
+
 def attempt_claim(cfg, token):
     device_id = cfg["deviceId"]
     ic = check_claimable(token, device_id)
@@ -368,6 +398,9 @@ def attempt_claim(cfg, token):
             remain = int((nf - time.time() * 1000) / 1000)
             log("info", f"Not claimable. Next in {format_countdown(max(0, remain))}")
         return token, False
+
+    # Capture balance BEFORE claim
+    balance_before = get_balance(token, device_id)
     user = get_user_info(token, device_id)
     if not user:
         return token, False
@@ -384,7 +417,27 @@ def attempt_claim(cfg, token):
     msg = result.get("message", "")
 
     if status == 200:
-        log("ok", f"Claimed! {msg}")
+        # Capture balance AFTER claim
+        time.sleep(2)
+        balance_after = get_balance(token, device_id)
+        claimed = None
+        if balance_before is not None and balance_after is not None:
+            claimed = balance_after - balance_before
+        rates = get_rates(ti)
+        log("ok", f"Claimed! +{claimed if claimed is not None else '?'} ITLG")
+        log("info", f"Balance: {balance_before} → {balance_after} ITLG")
+        log("info", f"Rate per 4h: {rates['rate_4h']} | Total: {rates['total']}/day")
+        # Telegram notification
+        try:
+            send_telegram_notif(cfg, {
+                "claimed": claimed,
+                "before": balance_before,
+                "after": balance_after,
+                "rate_4h": rates["rate_4h"],
+                "total_rate": rates["total"],
+            })
+        except Exception as e:
+            log("warn", f"Telegram notif failed: {e}")
         show_dashboard(token, device_id)
         return token, True
     if status == 400 and "TOO_EARLY" in str(msg).upper():
@@ -395,13 +448,61 @@ def attempt_claim(cfg, token):
         time.sleep(10)
         result2 = claim_airdrop(token, device_id)
         if result2.get("statusCode") == 200:
-            log("ok", f"Claimed on retry! {result2.get('message','')}")
+            balance_after = get_balance(token, device_id)
+            claimed = (balance_after - balance_before) if balance_before is not None and balance_after is not None else None
+            rates = get_rates(ti)
+            log("ok", f"Claimed on retry! +{claimed if claimed is not None else '?'} ITLG")
+            try:
+                send_telegram_notif(cfg, {
+                    "claimed": claimed,
+                    "before": balance_before,
+                    "after": balance_after,
+                    "rate_4h": rates["rate_4h"],
+                    "total_rate": rates["total"],
+                })
+            except Exception:
+                pass
             show_dashboard(token, device_id)
             return token, True
         log("err", f"Retry failed: {result2.get('message','')}")
         return token, False
     log("err", f"Claim failed ({status}): {msg}")
     return token, False
+
+# ─── Telegram notification ─────────────────────────────────────────────────────
+def send_telegram_notif(cfg, info):
+    """Send a Telegram message after successful claim. Requires tgBotToken + tgChatId in config."""
+    bot_token = cfg.get("tgBotToken")
+    chat_id = cfg.get("tgChatId")
+    if not bot_token or not chat_id:
+        return  # silent skip if not configured
+    import urllib.parse
+    claimed = info.get("claimed")
+    before = info.get("before")
+    after = info.get("after")
+    rate_4h = info.get("rate_4h", 0)
+    total_rate = info.get("total_rate", 0)
+    now = datetime.now().strftime("%H:%M:%S")
+    text = (
+        f"✅ ITLG Claim Success\n\n"
+        f"💰 Claimed: +{claimed} ITLG\n"
+        f"📊 Balance: {before} → {after} ITLG\n"
+        f"⏱️ Rate: {rate_4h}/4h ({total_rate}/day)\n"
+        f"🕐 {now}\n\n"
+        f"Next claim in 4h."
+    )
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    payload = f"chat_id={urllib.parse.quote(chat_id)}&text={urllib.parse.quote(text)}"
+    try:
+        r = requests.post(url, data=payload,
+                          headers={"Content-Type": "application/x-www-form-urlencoded"},
+                          timeout=10, verify=False)
+        if r.status_code == 200:
+            log("ok", "Telegram notification sent.")
+        else:
+            log("warn", f"Telegram error: {r.status_code}")
+    except Exception as e:
+        log("warn", f"Telegram notif error: {e}")
 
 # ─── Run modes ──────────────────────────────────────────────────────────────────
 def run_once(cfg):
