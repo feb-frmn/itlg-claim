@@ -39,6 +39,20 @@ def main():
         with open(EXAMPLE) as f:
             existing = json.load(f)
 
+    # Set random device fingerprint if not present
+    if not existing.get("deviceModel"):
+        import random as _r
+        devices = [
+            ("Redmi Note 8 Pro", "XiaoMi"), ("Redmi Note 11", "XiaoMi"),
+            ("SM-G991B", "samsung"), ("SM-A525F", "samsung"),
+            ("Pixel 6", "Google"), ("Pixel 7", "Google"),
+            ("CPH2247", "OPPO"), ("V2057A", "vivo"),
+            ("RMX3081", "Realme"), ("M2101K6G", "POCO"),
+        ]
+        dev = _r.choice(devices)
+        existing["deviceModel"] = dev[0]
+        existing["deviceBrand"] = dev[1]
+
     print(f"  {BOLD}REQUIRED{RESET} — without these the bot won't work:\n")
 
     loginId = ask("Interlink Login ID (number, e.g. 8002)",

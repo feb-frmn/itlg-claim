@@ -5,6 +5,8 @@
   "imapPassword": "",
 
   "deviceId": "",
+  "deviceModel": "",
+  "deviceBrand": "",
   "tgBotToken": "",
   "tgChatId": ""
 }

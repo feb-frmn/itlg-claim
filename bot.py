@@ -13,7 +13,7 @@ The bot auto-claims every 4h and sends a Telegram notification on success
 Config: config.json (run `python setup.py` for interactive setup)
 """
 
-import sys, os, json, time, imaplib, email, re, hashlib, base64, argparse
+import sys, os, json, time, imaplib, email, re, hashlib, base64, argparse, random
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 
@@ -59,6 +59,20 @@ def load_config():
         cfg = json.load(f)
     if not cfg.get("deviceId"):
         cfg["deviceId"] = hashlib.md5(str(cfg["loginId"]).encode()).hexdigest()[:16]
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(cfg, f, indent=2)
+    # Pick a random device fingerprint if not already set (sticks for this account)
+    if not cfg.get("deviceModel"):
+        devices = [
+            ("Redmi Note 8 Pro", "XiaoMi"), ("Redmi Note 11", "XiaoMi"),
+            ("SM-G991B", "samsung"), ("SM-A525F", "samsung"),
+            ("Pixel 6", "Google"), ("Pixel 7", "Google"),
+            ("CPH2247", "OPPO"), ("V2057A", "vivo"),
+            ("RMX3081", "Realme"), ("M2101K6G", "POCO"),
+        ]
+        dev = random.choice(devices)
+        cfg["deviceModel"] = dev[0]
+        cfg["deviceBrand"] = dev[1]
         with open(CONFIG_FILE, "w") as f:
             json.dump(cfg, f, indent=2)
     return cfg
@@ -126,15 +140,20 @@ def token_expired(token, buffer=300):
     return time.time() >= (exp - buffer)
 
 # ─── HTTP ─────────────────────────────────────────────────────────────────────
-def headers(token=None, device_id=None):
+def headers(token=None, device_id=None, cfg=None):
+    model = "Redmi Note 8 Pro"
+    brand = "XiaoMi"
+    if cfg:
+        model = cfg.get("deviceModel", model)
+        brand = cfg.get("deviceBrand", brand)
     h = {
         "User-Agent": "okhttp/4.12.0",
         "Content-Type": "application/json",
         "Accept-Encoding": "gzip",
         "version": APP_VER,
         "x-platform": "android",
-        "x-model": "Redmi Note 8 Pro",
-        "x-brand": "XiaoMi",
+        "x-model": model,
+        "x-brand": brand,
         "x-system-name": "Android",
         "x-bundle-id": "org.ai.interlinklabs.interlinkId",
     }
@@ -152,13 +171,13 @@ def safe_json(r):
     except Exception:
         return {}
 
-def api_get(path, token, device_id, params=None):
-    h = headers(token, device_id)
+def api_get(path, token, device_id, params=None, cfg=None):
+    h = headers(token, device_id, cfg)
     h["x-date"] = str(int(time.time() * 1000))
     return requests.get(f"{API_BASE}{path}", params=params, headers=h, verify=False, timeout=30)
 
-def api_post(path, data, token=None, device_id=None):
-    h = headers(token, device_id)
+def api_post(path, data, token=None, device_id=None, cfg=None):
+    h = headers(token, device_id, cfg)
     h["x-date"] = str(int(time.time() * 1000))
     body = json.dumps(data) if isinstance(data, (dict, list)) else str(data)
     h["x-content-hash"] = base64.b64encode(hashlib.sha256(body.encode()).digest()).decode()
@@ -465,6 +484,11 @@ def attempt_claim(cfg, token):
             log("info", f"Not claimable. Next in {format_countdown(max(0, remain))}")
         return token, False
 
+    # Human-like delay: wait 30-120s before claiming (humans don't claim at 00:00:00)
+    jitter = random.randint(30, 120)
+    log("info", f"Claimable! Waiting {jitter}s before claiming (human-like)...")
+    time.sleep(jitter)
+
     # Capture balance BEFORE claim
     balance_before = get_balance(token, device_id)
     user = get_user_info(token, device_id)
@@ -577,6 +601,10 @@ def run_loop(cfg):
         if remain_s <= 0:
             print()
             log("step", "Claim time!")
+            # Human-like: small random delay before going for claim
+            human_delay = random.randint(10, 60)
+            log("info", f"Waiting {human_delay}s (human-like)...")
+            time.sleep(human_delay)
             token = get_session(cfg)
             if not token:
                 time.sleep(60)
@@ -587,7 +615,7 @@ def run_loop(cfg):
                 next_frame = ic.get("nextFrame") or (time.time() * 1000 + CLAIM_INTERVAL * 1000)
             else:
                 next_frame = time.time() * 1000 + 60 * 1000
-        time.sleep(1)
+        time.sleep(10)  # Poll every 10s, not 1s — less suspicious than constant pinging
 
 def main():
     parser = argparse.ArgumentParser(description="Interlink Labs Auto Claim")

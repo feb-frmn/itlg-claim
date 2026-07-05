@@ -169,6 +169,17 @@ claim_state.json      # actual claim history for rate display (gitignored, auto-
 - Group mining is claimed automatically every cycle. The dashboard shows "pending activation" until the server enables your group's rate.
 - `burnedCycles` and `itlgRecoverable` are display-only — the API has no recovery endpoint yet.
 
+## Anti-Detection
+
+The bot mimics human behavior to avoid flagging:
+
+- **Random device fingerprint** — each account gets a random phone model (Samsung, Xiaomi, Pixel, OPPO, etc.) assigned on first run, stored in `config.json`
+- **Human-like timing** — waits 30-120 seconds after claim window opens before claiming (humans don't claim at exactly 00:00:00)
+- **No constant polling** — checks every 10 seconds, not every 1 second
+- **Same endpoint as the app** — uses the exact same API endpoints and headers as the official Interlink Android app
+
+You can override the device fingerprint by editing `deviceModel` and `deviceBrand` in `config.json` if you want it to match your real phone.
+
 ## License
 
 MIT
