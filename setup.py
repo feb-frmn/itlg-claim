@@ -55,7 +55,7 @@ def main():
 
     print(f"  {BOLD}REQUIRED{RESET} — without these the bot won't work:\n")
 
-    loginId = ask("Interlink Login ID (number, e.g. 123456)",
+    loginId = ask("Interlink Login ID (angka murni, contoh: 123456 — BUKAN @username)",
                   str(existing.get("loginId", "")))
 
     # For secrets: show hint if existing, but don't reveal the value
@@ -64,26 +64,29 @@ def main():
         print(f"  {BOLD}Passcode{RESET} {DIM}(current: {'*' * len(passcode_default)} — press Enter to keep){RESET}")
         passcode = getpass.getpass(f"  > ") or passcode_default
     else:
-        passcode = getpass.getpass(f"  {BOLD}Passcode{RESET} (6-digit code from registration)\n  > ")
+        passcode = getpass.getpass(f"  {BOLD}Passcode{RESET} (6-digit angka dari registrasi)\n  > ")
 
-    email = ask("Your Gmail address (registered to Interlink)",
+    email = ask("Email Gmail yang terdaftar di Interlink (contoh: kamu@gmail.com)",
                 existing.get("email", ""))
 
     imap_default = existing.get("imapPassword", "")
     if imap_default:
         print(f"  {BOLD}Gmail App Password{RESET} {DIM}(current: {'*' * len(imap_default)} — press Enter to keep){RESET}")
-        print(f"  {DIM}  Get one at: https://myaccount.google.com/apppasswords{RESET}")
+        print(f"  {DIM}  Bukan password Gmail! Bikin di: https://myaccount.google.com/apppasswords{RESET}")
+        print(f"  {DIM}  Bisa pake spasi (abcd efgh ijkl mnop) atau gabung (abcdefghijklmnop){RESET}")
         imap_password = getpass.getpass(f"  > ") or imap_default
     else:
-        print(f"  {BOLD}Gmail App Password{RESET} (NOT your Gmail password!)")
-        print(f"  {DIM}  Get one at: https://myaccount.google.com/apppasswords{RESET}")
+        print(f"  {BOLD}Gmail App Password{RESET} (16 huruf — BUKAN password Gmail lo!)")
+        print(f"  {DIM}  Bikin di: https://myaccount.google.com/apppasswords{RESET}")
+        print(f"  {DIM}  Bisa pake spasi atau gabung, dua-duanya jalan{RESET}")
         imap_password = getpass.getpass(f"  > ")
+
 
     print(f"\n  {BOLD}OPTIONAL{RESET} — press Enter to skip:\n")
 
-    tg_bot_token = ask("Telegram Bot Token (for push notifications)",
+    tg_bot_token = ask("Telegram Bot Token (kosongin kalau gak mau notif)",
                        existing.get("tgBotToken", ""))
-    tg_chat_id = ask("Telegram Chat ID (your user ID, e.g. 123456789)",
+    tg_chat_id = ask("Telegram Chat ID (kosongin kalau gak mau notif)",
                      str(existing.get("tgChatId", "")))
 
     # Build config

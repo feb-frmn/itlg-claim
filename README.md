@@ -17,16 +17,22 @@ python setup.py
 
 ### What you need before running setup
 
-| Field | What it is | How to get it |
-|---|---|---|
-| **loginId** | Your Interlink ID (a number, not email) | Open the Interlink app → Profile |
-| **passcode** | 6-digit passcode you set during registration | You chose this when signing up |
-| **email** | The Gmail registered to your Interlink account | Whatever email you signed up with |
-| **imapPassword** | Gmail App Password (NOT your Gmail password!) | [Get one here](https://myaccount.google.com/apppasswords) |
-| **tgBotToken** | Telegram bot token (optional) | Create a bot via [@BotFather](https://t.me/BotFather) |
-| **tgChatId** | Your Telegram user ID (optional) | Message [@userinfobot](https://t.me/userinfobot) |
+| Field | What it is | Example | How to get it |
+|---|---|---|---|
+| **loginId** | Your Interlink ID — a **number**, not email, not `@username` | `8002` | Open the Interlink app → Profile |
+| **passcode** | 6-digit passcode (numbers only) | `204008` | You chose this when signing up |
+| **email** | The Gmail address registered to your Interlink account | `you@gmail.com` | Whatever email you signed up with |
+| **imapPassword** | Gmail App Password — 16 letters, can have spaces or not, both work | `abcd efgh ijkl mnop` or `abcdefghijklmnop` | [Get one here](https://myaccount.google.com/apppasswords) |
+| **tgBotToken** | Telegram bot token (optional, for push notifications) | `123456:ABC-DEF...` | Create a bot via [@BotFather](https://t.me/BotFather) |
+| **tgChatId** | Your Telegram user ID (optional) | `123456789` | Message [@userinfobot](https://t.me/userinfobot) |
 
-Gmail App Password is a 16-character code that lets the bot read your OTP emails. It's **not** your Gmail login password. [Get one here](https://myaccount.google.com/apppasswords).
+#### Common questions
+
+**Login ID pakai `@`?** Tidak. Login ID itu angka murni, bukan `@username`. Contoh: `8002`. Cek di APK Interlink → bagian Profile.
+
+**IMAP Password pakai spasi atau gabung?** Dua-duanya jalan. Google ngasih 16 huruf dipisah spasi (`abcd efgh ijkl mnop`), tapi boleh juga digabung (`abcdefghijklmnop`). Yang penting 16 huruf dari Google.
+
+**IMAP Password = password Gmail?** Bukan! Itu **Gmail App Password**, kode khusus 16 huruf yang dibikin di pengaturan Google. Bukan password yang lo pake buat login Gmail. Bikin di [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords).
 
 ## Run
 
