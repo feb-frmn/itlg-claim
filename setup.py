@@ -55,7 +55,7 @@ def main():
 
     print(f"  {BOLD}REQUIRED{RESET} — without these the bot won't work:\n")
 
-    loginId = ask("Interlink Login ID (number, e.g. 8002)",
+    loginId = ask("Interlink Login ID (number, e.g. 123456)",
                   str(existing.get("loginId", "")))
 
     # For secrets: show hint if existing, but don't reveal the value
