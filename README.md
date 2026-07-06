@@ -38,13 +38,37 @@ python setup.py
 ## Commands
 
 ```
-python bot.py             # Start (auto-restart on crash)
-python bot.py --status    # Live status (API call, timer akurat)
-python bot.py --stop      # Stop bot
-python bot.py --restart   # Stop + start fresh
-python bot.py --once      # Single run
-python bot.py --login     # Force re-login OTP
+python bot.py               # Start (auto-restart on crash)
+python bot.py --status      # Live status (API call, timer akurat)
+python bot.py --stop        # Stop bot
+python bot.py --restart     # Stop + start fresh
+python bot.py --once        # Single run
+python bot.py --login       # Force re-login OTP (email)
+python bot.py --login-face  # Login with face photo (selfie)
 ```
+
+## Login Methods
+
+### Method 1: OTP (email)
+```bash
+python setup.py          # isi loginId, passcode, email, imapPassword
+python bot.py --login    # kirim OTP ke email, masukin kode
+```
+
+### Method 2: Selfie / Face Photo
+```bash
+python setup.py          # isi loginId, passcode + path foto selfie
+python bot.py --login-face  # upload foto → verifikasi wajah → login
+```
+Face photo: selfie jelas, pencahayaan bagus, wajah terlihat full. Format: JPG/PNG.
+
+## What's New in v2.1
+
+| Fitur | Detail |
+|---|---|
+| Face Login | `--login-face` — login pake selfie, gak perlu OTP |
+| Auto face fallback | Token expired → coba face login dulu sebelum OTP |
+| Dual login | OTP + Selfie, bisa pilih mana aja |
 
 ## What's New in v2.0
 

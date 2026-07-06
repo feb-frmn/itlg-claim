@@ -317,6 +317,128 @@ def do_login(cfg):
     log("err", "Login failed after 3 attempts.")
     return None, None
 
+# ─── Face Login (selfie photo, alternative to OTP) ───────────────────────────
+def get_presigned_login(cfg):
+    """Get presigned URL for face photo upload."""
+    r = api_post("/s3/face/presigned-login",
+                 {"loginId": str(cfg["loginId"]), "passcode": str(cfg["passcode"])},
+                 device_id=cfg["deviceId"])
+    return safe_json(r)
+
+def upload_face(upload_url, face_data):
+    """Upload face photo to presigned URL."""
+    try:
+        import urllib3
+        urllib3.disable_warnings()
+        r = requests.put(upload_url, data=face_data,
+                        headers={"Content-Type": "image/png"}, timeout=30, verify=False)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+def login_with_face(cfg, image_key):
+    """Login using face image key."""
+    r = api_post("/auth/login",
+                 {"loginId": str(cfg["loginId"]),
+                  "passcode": str(cfg["passcode"]),
+                  "image": image_key,
+                  "presignedUrlImage": image_key},
+                 device_id=cfg["deviceId"])
+    return safe_json(r)
+
+def do_face_login(cfg):
+    """Full face login flow: verify passcode → get presigned URL → upload photo → login.
+    Returns (access_token, refresh_token) or (None, None).
+    """
+    lid = cfg.get("loginId", "")
+    pwd = cfg.get("passcode", "")
+    photo_path = cfg.get("facePhoto", "")
+
+    if not all([lid, pwd]):
+        log("err", "Missing loginId or passcode in config.")
+        return None, None
+
+    if not photo_path or not os.path.exists(photo_path):
+        log("err", f"Face photo not found: {photo_path}")
+        log("info", "Run: python setup.py (isi facePhoto path)")
+        return None, None
+
+    # Step 1: Verify passcode
+    log("step", "Verifying passcode...")
+    check = check_passcode(cfg)
+    if not check:
+        log("err", "Invalid passcode.")
+        return None, None
+    log("ok", f"User verified: {check}")
+
+    # Step 2: Read face photo
+    try:
+        with open(photo_path, "rb") as f:
+            face_data = f.read()
+        log("step", f"Loaded face photo: {photo_path} ({len(face_data)} bytes)")
+    except Exception as e:
+        log("err", f"Cannot read photo: {e}")
+        return None, None
+
+    # Step 3: Get presigned URL
+    log("step", "Getting presigned upload URL...")
+    presign = get_presigned_login(cfg)
+    if presign.get("statusCode") != 200:
+        log("err", f"Presign failed: {presign.get('message', '')}")
+        return None, None
+
+    try:
+        image_data = presign["data"]["image"]
+        image_key = image_data["key"]
+        upload_url = image_data["uploadUrl"]
+        log("ok", f"Got presigned URL (key: {image_key[:30]}...)")
+    except (KeyError, TypeError) as e:
+        log("err", f"Unexpected presign response: {e}")
+        return None, None
+
+    # Step 4: Upload face photo
+    log("step", "Uploading face photo...")
+    if not upload_face(upload_url, face_data):
+        log("err", "Face photo upload failed.")
+        return None, None
+    log("ok", "Face photo uploaded.")
+
+    # Step 5: Login with face
+    log("step", "Verifying face + logging in...")
+    result = login_with_face(cfg, image_key)
+
+    # Extract tokens from response
+    data = result.get("data", {})
+    token = None
+    refresh_tok = None
+
+    if isinstance(data, dict):
+        token = data.get("accessToken") or data.get("token") or data.get("access_token")
+        refresh_tok = data.get("refreshToken") or data.get("refresh_token")
+
+    if not token:
+        for k in ["token", "accessToken", "access_token"]:
+            if k in result:
+                token = result[k]
+    if not refresh_tok:
+        for k in ["refreshToken", "refresh_token"]:
+            if k in result:
+                refresh_tok = result[k]
+
+    if token:
+        log("ok", "Face login successful!")
+        save_tokens(token, refresh_tok)
+        log("info", f"Token saved. Refresh: {'YES' if refresh_tok else 'NO'}")
+        return token, refresh_tok
+
+    # Check for specific errors
+    msg = result.get("message", "")
+    if "E304" in str(msg):
+        log("err", "FACE MISMATCH! Selfie gak cocok sama foto registrasi.")
+    else:
+        log("err", f"Face login failed: {msg}")
+    return None, None
+
 # ─── Refresh ──────────────────────────────────────────────────────────────────
 def do_refresh(cfg, refresh_token):
     if not refresh_token:
@@ -339,7 +461,7 @@ def do_refresh(cfg, refresh_token):
 
 # ─── Get session (login once, never logout) ────────────────────────────────────
 def get_session(cfg, allow_login=True):
-    """Get a valid access token. Order: stored → refresh → OTP login (last resort)."""
+    """Get a valid access token. Order: stored → refresh → face login → OTP login."""
     access, refresh = load_tokens()
     if access and not token_expired(access):
         return access
@@ -348,9 +470,17 @@ def get_session(cfg, allow_login=True):
         if new_access:
             return new_access
     if not allow_login:
-        log("warn", "No valid token. Run: python bot.py --login")
+        log("warn", "No valid token. Run: python bot.py --login or --login-face")
         return None
-    log("warn", "No valid token. Triggering OTP login...")
+    # Try face login first (if facePhoto configured)
+    if cfg.get("facePhoto") and os.path.exists(cfg["facePhoto"]):
+        log("warn", "No valid token. Trying face login...")
+        access, refresh = do_face_login(cfg)
+        if access:
+            return access
+        log("warn", "Face login failed. Trying OTP...")
+    else:
+        log("warn", "No valid token. Triggering OTP login...")
     access, refresh = do_login(cfg)
     return access
 
@@ -1052,6 +1182,7 @@ def main():
     parser = argparse.ArgumentParser(description="Interlink Labs Auto Claim")
     parser.add_argument("--once", action="store_true", help="Single run, then exit")
     parser.add_argument("--login", action="store_true", help="Force re-login via OTP")
+    parser.add_argument("--login-face", action="store_true", help="Login with face photo (selfie)")
     parser.add_argument("--status", action="store_true", help="Live status check (API call)")
     parser.add_argument("--stop", action="store_true", help="Stop the running bot")
     parser.add_argument("--restart", action="store_true", help="Stop then start the bot")
@@ -1071,6 +1202,14 @@ def main():
         access, _ = do_login(cfg)
         if access:
             log("ok", "Login complete. Run: python bot.py")
+        return
+
+    if args.login_face:
+        if os.path.exists(TOKEN_FILE):
+            os.remove(TOKEN_FILE)
+        access, _ = do_face_login(cfg)
+        if access:
+            log("ok", "Face login complete. Run: python bot.py")
         return
 
     if args.status:

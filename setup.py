@@ -84,6 +84,16 @@ def main():
 
     print(f"\n  {BOLD}OPTIONAL{RESET} — press Enter to skip:\n")
 
+    # Face photo for face login (alternative to OTP)
+    face_photo_default = existing.get("facePhoto", "")
+    face_photo = ask("Face photo path (selfie.jpg — alternative login tanpa OTP)",
+                     face_photo_default)
+    if face_photo:
+        face_photo = face_photo.strip('"').strip("'")
+        if not os.path.exists(face_photo):
+            print(f"  {BOLD}⚠️  File not found: {face_photo}{RESET}")
+            print(f"  {DIM}  Face login gak akan jalan tanpa file ini. Tapi lanjut aja, bisa OTP juga.{RESET}")
+
     tg_bot_token = ask("Telegram Bot Token (kosongin kalau gak mau notif)",
                        existing.get("tgBotToken", ""))
     tg_chat_id = ask("Telegram Chat ID (kosongin kalau gak mau notif)",
@@ -95,6 +105,7 @@ def main():
         "passcode": passcode,
         "email": email,
         "imapPassword": imap_password,
+        "facePhoto": face_photo,
         "deviceId": existing.get("deviceId", ""),
         "tgBotToken": tg_bot_token,
         "tgChatId": tg_chat_id,
@@ -129,9 +140,13 @@ def main():
     else:
         print(f"  {GREEN}All required fields filled!{RESET}")
         print(f"\n  {BOLD}Next steps:{RESET}")
-        print(f"  1. Run: {CYAN}python bot.py --login{RESET}  (one-time OTP login)")
-        print(f"  2. Run: {CYAN}python bot.py{RESET}           (start the bot)")
-        print(f"  3. Leave it running — it auto-claims every 4h + group mining 24h, sends Telegram notifs.")
+        print(f"  1. Run: {CYAN}python setup.py{RESET}         (interactive setup)")
+        print(f"  2. Login method:")
+        print(f"     • {CYAN}python bot.py --login{RESET}       (OTP via email)")
+        if face_photo:
+            print(f"     • {CYAN}python bot.py --login-face{RESET} (selfie photo)")
+        print(f"  3. Run: {CYAN}python bot.py{RESET}           (start the bot)")
+        print(f"  4. Leave it running — auto-claims mining + group + recovery.")
         print(f"\n  {BOLD}⚠️  OTP not arriving?{RESET}")
         print(f"  {DIM}  • Check Spam/Junk folder in Gmail{RESET}")
         print(f"  {DIM}  • Wait 1-2 minutes — Interlink can be slow{RESET}")
