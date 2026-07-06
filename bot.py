@@ -438,7 +438,7 @@ def do_face_login(cfg, photo_override=None):
     # Check for specific errors
     msg = result.get("message", "")
     if "E304" in str(msg):
-        log("err", "FACE MISMATCH! Selfie gak cocok sama foto registrasi.")
+        log("err", "FACE MISMATCH! Selfie doesn't match registration photo.")
     else:
         log("err", f"Face login failed: {msg}")
     return None, None

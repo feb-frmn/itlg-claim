@@ -9,7 +9,7 @@
 ╚═╝     ╚══════╝╚═════╝       ╚═╝     ╚═╝  ╚═╝╚═╝     ╚═╝╚═╝  ╚═══╝
 ```
 
-Auto-claim $ITLG from Interlink Labs. Mining, group mining & recovery — full otomatis, crash-proof.
+Auto-claim $ITLG from Interlink Labs. Mining, group mining & recovery — fully automatic, crash-proof.
 
 Single Python script. Login once with OTP, then it claims forever. Sends Telegram notification on every successful claim and crash.
 
@@ -51,47 +51,47 @@ python bot.py --login-face  # Login with face photo (selfie)
 
 ### Method 1: OTP (email)
 ```bash
-python setup.py          # isi loginId, passcode, email, imapPassword
-python bot.py --login    # kirim OTP ke email, masukin kode
+python setup.py          # enter loginId, passcode, email, imapPassword
+python bot.py --login    # send OTP to email, enter code
 ```
 
 ### Method 2: Selfie / Face Photo
 ```bash
-python setup.py          # isi loginId, passcode + path foto selfie
-python bot.py --login-face  # upload foto → verifikasi wajah → login
+python setup.py          # enter loginId, passcode + selfie photo path
+python bot.py --login-face  # upload photo → face verify → login
 ```
-Face photo: selfie jelas, pencahayaan bagus, wajah terlihat full. Format: JPG/PNG.
+Face photo: clear selfie, good lighting, full face visible. Format: JPG/PNG.
 
 ## What's New in v2.1
 
-| Fitur | Detail |
+| Feature | Detail |
 |---|---|
-| Face Login | `--login-face` — login pake selfie, gak perlu OTP |
-| Auto face fallback | Token expired → coba face login dulu sebelum OTP |
-| Dual login | OTP + Selfie, bisa pilih mana aja |
+| Face Login | `--login-face` — login with selfie, no OTP needed |
+| Auto face fallback | Token expired → try face login first before OTP |
+| Dual login | OTP + Selfie, use either one |
 
 ## What's New in v2.0
 
-| Fitur | v1 | v2 |
+| Feature | v1 | v2 |
 |---|---|---|
-| Mining claim (4h) | Auto + delay | Auto + delay + re-fetch timer saat gagal |
+| Mining claim (4h) | Auto + delay | Auto + delay + re-fetch timer on failure |
 | Group mining (24h) | Manual | Auto + human delay 30-120s |
-| Recovery | Manual | Auto setiap cycle + claim |
-| Status timer | Parse log basi | Live API (match APK) |
-| Crash | Mati total | Auto-restart 50x, delay 30s |
+| Recovery | Manual | Auto every cycle + claim |
+| Status timer | Parse stale log | Live API (matches APK) |
+| Crash | Dead | Auto-restart 50x, delay 30s |
 | Telegram notif | Claim only | Claim + crash alert |
-| Stop | Kill manual | `--stop` graceful |
-| Log | Bengkak | Auto-trim 500 lines + clean 2 hari |
-| Double-run | Bisa | Protected |
-| PID | Tampil | Hidden (group-safe) |
+| Stop | Manual kill | `--stop` graceful |
+| Log | Bloated | Auto-trim 500 lines + clean 2 days |
+| Double-run | Possible | Protected |
+| PID | Shown | Hidden (group-safe) |
 
-## Auto Claim (semua otomatis)
+## Auto Claim (fully automatic)
 
-| Fitur | Interval | Status |
+| Feature | Interval | Status |
 |---|---|---|
-| Mining claim | 4 jam | ✅ Auto + human delay 10-60s |
-| Group mining | 24 jam | ✅ Auto + human delay 30-120s |
-| Recovery | Setiap cycle | ✅ Auto-check + claim |
+| Mining claim | 4 hours | ✅ Auto + human delay 10-60s |
+| Group mining | 24 hours | ✅ Auto + human delay 30-120s |
+| Recovery | Every cycle | ✅ Auto-check + claim |
 | Token refresh | Auto | ✅ JWT auto-refresh |
 
 ## Status Output

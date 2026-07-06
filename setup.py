@@ -55,7 +55,7 @@ def main():
 
     print(f"  {BOLD}REQUIRED{RESET} — without these the bot won't work:\n")
 
-    loginId = ask("Interlink Login ID (angka murni, contoh: 123456 — BUKAN @username)",
+    loginId = ask("Interlink Login ID (numbers only, e.g. 123456 — NOT @username)",
                   str(existing.get("loginId", "")))
 
     # For secrets: show hint if existing, but don't reveal the value
@@ -64,21 +64,21 @@ def main():
         print(f"  {BOLD}Passcode{RESET} {DIM}(current: {'*' * len(passcode_default)} — press Enter to keep){RESET}")
         passcode = getpass.getpass(f"  > ") or passcode_default
     else:
-        passcode = getpass.getpass(f"  {BOLD}Passcode{RESET} (6-digit angka dari registrasi)\n  > ")
+        passcode = getpass.getpass(f"  {BOLD}Passcode{RESET} (6-digit number from registration)\n  > ")
 
-    email = ask("Email Gmail yang terdaftar di Interlink (contoh: kamu@gmail.com)",
+    email = ask("Gmail registered on Interlink (e.g. you@gmail.com)",
                 existing.get("email", ""))
 
     imap_default = existing.get("imapPassword", "")
     if imap_default:
         print(f"  {BOLD}Gmail App Password{RESET} {DIM}(current: {'*' * len(imap_default)} — press Enter to keep){RESET}")
-        print(f"  {DIM}  Bukan password Gmail! Bikin di: https://myaccount.google.com/apppasswords{RESET}")
-        print(f"  {DIM}  Bisa pake spasi (abcd efgh ijkl mnop) atau gabung (abcdefghijklmnop){RESET}")
+        print(f"  {DIM}  NOT your Gmail password! Create at: https://myaccount.google.com/apppasswords{RESET}")
+        print(f"  {DIM}  Supports spaces (abcd efgh ijkl mnop) or combined (abcdefghijklmnop){RESET}")
         imap_password = getpass.getpass(f"  > ") or imap_default
     else:
-        print(f"  {BOLD}Gmail App Password{RESET} (16 huruf — BUKAN password Gmail lo!)")
-        print(f"  {DIM}  Bikin di: https://myaccount.google.com/apppasswords{RESET}")
-        print(f"  {DIM}  Bisa pake spasi atau gabung, dua-duanya jalan{RESET}")
+        print(f"  {BOLD}Gmail App Password{RESET} (16 characters — NOT your Gmail password!)")
+        print(f"  {DIM}  Create at: https://myaccount.google.com/apppasswords{RESET}")
+        print(f"  {DIM}  Supports spaces or combined, both work{RESET}")
         imap_password = getpass.getpass(f"  > ")
 
 
@@ -92,11 +92,11 @@ def main():
         face_photo = face_photo.strip('"').strip("'")
         if not os.path.exists(face_photo):
             print(f"  {BOLD}⚠️  File not found: {face_photo}{RESET}")
-            print(f"  {DIM}  Face login gak akan jalan tanpa file ini. Tapi lanjut aja, bisa OTP juga.{RESET}")
+            print(f"  {DIM}  Face login won't work without this file. You can continue and use OTP instead.{RESET}")
 
-    tg_bot_token = ask("Telegram Bot Token (kosongin kalau gak mau notif)",
+    tg_bot_token = ask("Telegram Bot Token (leave empty to disable notifications)",
                        existing.get("tgBotToken", ""))
-    tg_chat_id = ask("Telegram Chat ID (kosongin kalau gak mau notif)",
+    tg_chat_id = ask("Telegram Chat ID (leave empty to disable notifications)",
                      str(existing.get("tgChatId", "")))
 
     # Build config
