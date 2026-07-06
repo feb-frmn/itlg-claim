@@ -235,3 +235,11 @@ You can override the device fingerprint by editing `deviceModel` and `deviceBran
 ## License
 
 MIT
+
+---
+
+## ☕ Support
+
+Kalau bot ini membantu, bisa traktir kopi:
+
+[![Saweria](https://img.shields.io/badge/Saweria-ffb13b?style=for-the-badge&logo=ko-fi&logoColor=white)](https://saweria.co/febfrmn)
