@@ -39,7 +39,7 @@ python setup.py
 
 ```
 python bot.py               # Start (auto-restart on crash)
-python bot.py --status      # Live status (API call, timer akurat)
+python bot.py --status      # Live status (API call, accurate timer)
 python bot.py --stop        # Stop bot
 python bot.py --restart     # Stop + start fresh
 python bot.py --once        # Single run

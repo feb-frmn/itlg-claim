@@ -91,10 +91,16 @@ def load_config():
 # ─── Token store ────────────────────────────────────────────────────────────────
 def save_tokens(access, refresh):
     data = {"access": access, "refresh": refresh or "", "saved_at": int(time.time())}
-    for path in (TOKEN_FILE, os.path.join(SCRIPT_DIR, "token-backup.json")):
-        with open(path, "w") as f:
-            json.dump(data, f)
-        os.chmod(path, 0o600)
+    # Backup OLD token before overwriting (so backup = previous, not current)
+    if os.path.exists(TOKEN_FILE):
+        try:
+            import shutil
+            shutil.copy2(TOKEN_FILE, os.path.join(SCRIPT_DIR, "token-backup.json"))
+        except Exception:
+            pass
+    with open(TOKEN_FILE, "w") as f:
+        json.dump(data, f)
+    os.chmod(TOKEN_FILE, 0o600)
 
 def load_tokens():
     try:
@@ -223,6 +229,7 @@ def grab_otp(cfg, email_addr, after_ts):
     time.sleep(5)
     deadline = time.time() + OTP_TIMEOUT
     while time.time() < deadline:
+        mail = None
         try:
             mail = imaplib.IMAP4_SSL("imap.gmail.com")
             mail.login(email_addr, cfg["imapPassword"])
@@ -259,11 +266,13 @@ def grab_otp(cfg, email_addr, after_ts):
                         except: pass
                     matches = re.findall(r"\b(\d{6})\b", body or "")
                     if matches:
-                        mail.logout()
                         return matches[0]
-            mail.logout()
         except Exception as e:
             log("warn", f"IMAP error: {e}")
+        finally:
+            if mail:
+                try: mail.logout()
+                except: pass
         time.sleep(OTP_POLL_DELAY)
     return None
 
@@ -410,6 +419,16 @@ def do_face_login(cfg, photo_override=None):
     # Step 5: Login with face
     log("step", "Verifying face + logging in...")
     result = login_with_face(cfg, image_key)
+
+    # Check statusCode first
+    status = result.get("statusCode")
+    if status and status not in (200, 201):
+        msg = result.get("message", "")
+        if "E304" in str(msg):
+            log("err", "FACE MISMATCH! Selfie doesn't match registration photo.")
+        else:
+            log("err", f"Face login failed (HTTP {status}): {msg}")
+        return None, None
 
     # Extract tokens from response
     data = result.get("data", {})
@@ -804,14 +823,23 @@ def send_telegram_notif(cfg, info):
     now = fmt_wib("%H:%M:%S WIB")
     day_line = f"\n📈 Per day: ~{per_day} ITLG (6 claims)" if per_day else ""
     group_line = f"\n👥 Group: {group_rate}/day (active!)" if group_rate > 0 else "\n👥 Group: pending activation"
-    text = (
-        f"✅ ITLG Claim Success\n\n"
-        f"💰 Claimed: +{claimed} ITLG\n"
-        f"📊 Balance: {before} → {after} ITLG\n"
-        f"⏱️ Per claim: {per_claim} ITLG{day_line}{group_line}\n"
-        f"🕐 {now}\n\n"
-        f"Next claim in 4h."
-    )
+    # Check if this is a crash alert (claimed=0, before=0, after=0)
+    if claimed == 0 and before == 0 and after == 0:
+        text = (
+            f"⚠️ ITLG Bot Crash\n\n"
+            f"Bot crashed but auto-restarting.\n"
+            f"🕐 {now}\n"
+            f"Run: python bot.py --status"
+        )
+    else:
+        text = (
+            f"✅ ITLG Claim Success\n\n"
+            f"💰 Claimed: +{claimed} ITLG\n"
+            f"📊 Balance: {before} → {after} ITLG\n"
+            f"⏱️ Per claim: {per_claim} ITLG{day_line}{group_line}\n"
+            f"🕐 {now}\n\n"
+            f"Next claim in 4h."
+        )
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload = {"chat_id": chat_id, "text": text}
     try:
@@ -956,7 +984,7 @@ def run_loop(cfg):
     token = get_session(cfg)
     if not token:
         log("err", "No valid token. Run: python bot.py --login")
-        return
+        raise RuntimeError("No valid token — manual login required")
 
     # ─── Initial check: claim both if available ───
     ic, _ = show_dashboard(token, cfg["deviceId"])
@@ -1250,10 +1278,9 @@ def show_status():
                     h_live, m_live = ago_live // 3600, (ago_live % 3600) // 60
                     last_claim_wib = datetime.fromtimestamp(lct_sec, tz=WIB).strftime("%H:%M WIB")
                     h, m = h_live, m_live  # override stale local values
-                    # Also sync local state balance to avoid desync
+                    # Sync local state balance to avoid desync
                     if state.get("balance", 0) != bal:
-                        lc_amount = state.get("last_claim", 0)
-                        updated_at = state.get("updated_at", 0)
+                        save_claim_state(balance=bal)
         except Exception:
             pass
     else:
@@ -1267,7 +1294,8 @@ def show_status():
 
     # Parse log for last group claim + recovery (these are events, not timers — safe to parse)
     try:
-        raw_log = open(os.path.join(SCRIPT_DIR, "interlink.log")).read()
+        with open(os.path.join(SCRIPT_DIR, "interlink.log")) as f:
+            raw_log = f.read()
         lgc = re.findall(r"Group mining claimed!\s+\+([\d?]+) ITLG", raw_log)
         lrc = re.findall(r"Recovery complete!\s+\+([\d]+) ITLG", raw_log)
         if lgc: last_group_claim = f"+{lgc[-1]} ITLG"
@@ -1324,22 +1352,18 @@ def main():
         return
 
     if args.login_face:
-        # Backup existing token before face login
+        # Backup existing token before face login (extra safety net)
+        import shutil
         if os.path.exists(TOKEN_FILE):
-            import shutil
             shutil.copy2(TOKEN_FILE, TOKEN_FILE + ".pre-login")
         access, _ = do_face_login(cfg, photo_override=args.photo)
         if access:
             log("ok", "Face login complete. Run: python bot.py")
-            # Clean up pre-login backup on success
-            pre = TOKEN_FILE + ".pre-login"
-            if os.path.exists(pre):
-                os.remove(pre)
+            # Keep .pre-login as extra backup (don't delete)
         else:
             # Restore previous token if face login failed
             pre = TOKEN_FILE + ".pre-login"
             if os.path.exists(pre):
-                import shutil
                 shutil.move(pre, TOKEN_FILE)
                 log("info", "Restored previous token (face login failed).")
         return
@@ -1379,10 +1403,12 @@ def main():
                 os.remove(PID_FILE)
             except Exception:
                 pass
-    # Write our PID
+    # Write our PID (atomic: write to temp, then rename)
     try:
-        with open(PID_FILE, "w") as f:
+        tmp = PID_FILE + ".tmp"
+        with open(tmp, "w") as f:
             f.write(str(os.getpid()))
+        os.rename(tmp, PID_FILE)
     except Exception:
         pass
 
