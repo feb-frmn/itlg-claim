@@ -1,8 +1,17 @@
 # Interlink Auto Claim
 
-Auto-claim $ITLG from Interlink Labs. Every 4 hours, no manual clicking.
+```
+███████╗███████╗██████╗       ███████╗██████╗ ███╗   ███╗███╗   ██╗
+██╔════╝██╔════╝██╔══██╗      ██╔════╝██╔══██╗████╗ ████║████╗  ██║
+█████╗  █████╗  ██████╔╝█████╗█████╗  ██████╔╝██╔████╔██║██╔██╗ ██║
+██╔══╝  ██╔══╝  ██╔══██╗╚════╝██╔══╝  ██╔══██╗██║╚██╔╝██║██║╚██╗██║
+██║     ███████╗██████╔╝      ██║     ██║  ██║██║ ╚═╝ ██║██║ ╚████║
+╚═╝     ╚══════╝╚═════╝       ╚═╝     ╚═╝  ╚═╝╚═╝     ╚═╝╚═╝  ╚═══╝
+```
 
-Single Python script. Login once with OTP, then it claims forever. The bot knows when your next claim is available and counts down automatically — just leave it running. Sends a Telegram notification on every successful claim.
+Auto-claim $ITLG from Interlink Labs. Mining, group mining & recovery — full otomatis, crash-proof.
+
+Single Python script. Login once with OTP, then it claims forever. Sends Telegram notification on every successful claim and crash.
 
 ## Quick Start
 
@@ -13,224 +22,123 @@ pip install requests
 python setup.py
 ```
 
-`setup.py` will ask you for everything it needs and save it to `config.json`. You just fill in the blanks and press Enter.
+`setup.py` will ask you for everything it needs and save it to `config.json`.
 
 ### What you need before running setup
 
 | Field | What it is | Example | How to get it |
 |---|---|---|---|
-| **loginId** | Your Interlink ID — a **number**, not email, not `@username` | `8002` | Open the Interlink app → Profile |
+| **loginId** | Your Interlink ID — a **number**, not email | `8002` | Open the Interlink app → Profile |
 | **passcode** | 6-digit passcode (numbers only) | `204008` | You chose this when signing up |
-| **email** | The Gmail address registered to your Interlink account | `you@gmail.com` | Whatever email you signed up with |
-| **imapPassword** | Gmail App Password — 16 letters, can have spaces or not, both work | `abcd efgh ijkl mnop` or `abcdefghijklmnop` | [Get one here](https://myaccount.google.com/apppasswords) |
-| **tgBotToken** | Telegram bot token (optional, for push notifications) | `123456:ABC-DEF...` | Create a bot via [@BotFather](https://t.me/BotFather) |
+| **email** | The Gmail address registered to your account | `you@gmail.com` | Whatever email you signed up with |
+| **imapPassword** | Gmail App Password — 16 letters | `abcd efgh ijkl mnop` | [Get one here](https://myaccount.google.com/apppasswords) |
+| **tgBotToken** | Telegram bot token (optional) | `123456:ABC-DEF...` | Create via [@BotFather](https://t.me/BotFather) |
 | **tgChatId** | Your Telegram user ID (optional) | `123456789` | Message [@userinfobot](https://t.me/userinfobot) |
 
-#### Common questions
-
-**Login ID pakai `@`?** Tidak. Login ID itu angka murni, bukan `@username`. Contoh: `8002`. Cek di APK Interlink → bagian Profile.
-
-**IMAP Password pakai spasi atau gabung?** Dua-duanya jalan. Google ngasih 16 huruf dipisah spasi (`abcd efgh ijkl mnop`), tapi boleh juga digabung (`abcdefghijklmnop`). Yang penting 16 huruf dari Google.
-
-**IMAP Password = password Gmail?** Bukan! Itu **Gmail App Password**, kode khusus 16 huruf yang dibikin di pengaturan Google. Bukan password yang lo pake buat login Gmail. Bikin di [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords).
-
-## Run
-
-```bash
-python bot.py
-```
-
-That's it. The bot logs in via OTP once, saves the token, and stays running. It reads the next claim time from the API and shows a live countdown. When the timer hits zero, it claims automatically and sends a Telegram notification.
+## Commands
 
 ```
-  ╔══════════════════════════════════════╗
-  ║  username                              ║
-  ╠══════════════════════════════════════╣
-  ║  ITLG Balance                         609  ║
-  ║  Last claim                          17 ITLG  ║
-  ║  Per claim                         17.0 ITLG  ║
-  ║  Per day                          102.0 ITLG  ║
-  ║  Group                   pending activation  ║
-  ║  Referral                    1.9 (8 refs)  ║
-  ║  Streak/Burned                    0 / 511  ║
-  ║  Recoverable                   10502 ITLG  ║
-  ╚══════════════════════════════════════╝
-⏰ Next claim in 03h 52m 10s
+python bot.py             # Start (auto-restart on crash)
+python bot.py --status    # Live status (API call, timer akurat)
+python bot.py --stop      # Stop bot
+python bot.py --restart   # Stop + start fresh
+python bot.py --once      # Single run
+python bot.py --login     # Force re-login OTP
 ```
 
-What each line means:
+## What's New in v2.0
 
-- **ITLG Balance** — your current mined balance
-- **Last claim** — how much you got from the most recent claim
-- **Per claim** — average ITLG per claim (from your actual claim history)
-- **Per day** — estimated daily earnings (per claim × 6 cycles per day)
-- **Group** — group mining rate. Shows "pending activation" if your group rate is still 0. Once the group is active, the rate shows here and claims increase automatically.
-- **Referral** — combined direct + indirect referral rate and your referrer count
-- **Streak/Burned** — your current burning streak and total burned cycles
-- **Recoverable** — ITLG locked in burned cycles that can be recovered later
+| Fitur | v1 | v2 |
+|---|---|---|
+| Mining claim (4h) | Auto + delay | Auto + delay + re-fetch timer saat gagal |
+| Group mining (24h) | Manual | Auto + human delay 30-120s |
+| Recovery | Manual | Auto setiap cycle + claim |
+| Status timer | Parse log basi | Live API (match APK) |
+| Crash | Mati total | Auto-restart 50x, delay 30s |
+| Telegram notif | Claim only | Claim + crash alert |
+| Stop | Kill manual | `--stop` graceful |
+| Log | Bengkak | Auto-trim 500 lines + clean 2 hari |
+| Double-run | Bisa | Protected |
+| PID | Tampil | Hidden (group-safe) |
 
-On a successful claim, you'll see in the console:
+## Auto Claim (semua otomatis)
 
-```
-✅ Claimed! +17 ITLG
-ℹ️ Balance: 592 → 609 ITLG
-ℹ️ Avg per claim: 17.0 | Per day: 102.0 ITLG
-✅ Telegram notification sent.
-```
+| Fitur | Interval | Status |
+|---|---|---|
+| Mining claim | 4 jam | ✅ Auto + human delay 10-60s |
+| Group mining | 24 jam | ✅ Auto + human delay 30-120s |
+| Recovery | Setiap cycle | ✅ Auto-check + claim |
+| Token refresh | Auto | ✅ JWT auto-refresh |
 
-And on Telegram:
-
-```
-✅ ITLG Claim Success
-
-💰 Claimed: +17 ITLG
-📊 Balance: 592 → 609 ITLG
-⏱️ Per claim: 17.0 ITLG
-📈 Per day: ~102.0 ITLG (6 claims)
-👥 Group: pending activation
-🕐 12:00:23
-
-Next claim in 4h.
-```
-
-## Options
-
-```
-python setup.py          # interactive setup (fills config.json for you)
-python bot.py            # run with live countdown timer (default)
-python bot.py --once     # single run, check + claim if available, then exit
-python bot.py --login    # force re-login (get new OTP)
-python bot.py --status   # quick status check (no login, reads local files)
-```
-
-## Check Status
-
-After the bot is running (or even if it's not), you can check the latest claim status anytime:
-
-```bash
-python bot.py --status
-```
-
-This reads local files (`claim_state.json` + `interlink.log`) — no API call, no login needed. Works even if the bot is running in the background.
+## Status Output
 
 ```
   ╔══════════════════════════════════════╗
   ║   Interlink ITLG — Status             ║
   ╚══════════════════════════════════════╝
 
-  🤖 Bot: ✅ Running (PID 101441)
-  💰 Balance: 5213 ITLG
-  🎯 Last claim: +17 ITLG (0h 16m ago)
-  📊 History: 17 → 17 → 17
-  👥 Refs: 3.5 (16 refs)
-  💎 Recoverable: 10415 ITLG
-  ⏳ Next claim: 03h 40m 17s
+  🤖 Bot: ✅ Running
+  💰 Balance: 8087 ITLG
+  🎯 Last claim: +41 ITLG (0h 2m ago, 15:02 WIB)
+  📊 History: 17 → 17 → 17 → 41 → 41
+  📈 Per claim: 25.0 ITLG | Per day: 150.0 ITLG
+  👥 Refs: 4.5 (21 refs)
+  🔥 Streak/Burned: 0 / 511
+  💎 Recoverable: 10241 ITLG
+  ─────────────────────────────
+  👥 Group: claimed today (5 groups, pool: 432)
+  ⏳ Group next: 16h 55m 44s
+  ⏳ Mining next: 03h 55m 44s
 ```
 
-## Group Mining (24h cycle)
+All values are **live from API** — timer matches your APK exactly.
 
-The bot **automatically claims group mining every 24 hours** via a separate endpoint (`/group-mining/claim-group-mining`). One claim per account covers ALL your security groups at once.
+## How It Works
 
-The dashboard shows two timers:
-```
-⏰ Mining: 01h 58m 21s | Group: 22h 58m 21s
-```
+1. First run: sends OTP to Gmail, IMAP grabs it, verifies, saves token
+2. Bot reads `nextFrame` from API — knows exactly when you can claim next
+3. Mining claim every 4h, group mining every 24h, recovery every cycle — all automatic
+4. Telegram notification on every claim + crash alert
+5. Token never logs out. Auto-refresh if expired. Auto-restart if crash.
+6. Log auto-cleanup: trims to last 500 lines, deletes files older than 2 days
 
-- **Mining** — solo mining claim every 4h (`/token/claim-airdrop`)
-- **Group** — security group mining claim every 24h (`/group-mining/claim-group-mining`)
+## Anti-Detection
 
-If the dashboard shows **"pending activation"**, it means your group mining rate is still `0` on the server. This happens when:
+- **Random device fingerprint** — each account gets a random phone model (Samsung, Xiaomi, Pixel, OPPO, etc.)
+- **Human-like timing** — waits 10-120s after claim window opens before claiming
+- **No constant polling** — checks every 10 seconds, not every 1 second
+- **Same endpoint as the app** — uses the exact same API endpoints and headers as the official Interlink Android app
 
-- You haven't created a group in the Interlink app yet
-- Your group doesn't have enough active members (they need to be KYC-verified and have claimed at least once)
-- The group mining cycle hasn't started yet (it may need one full cycle to activate)
+## Token Backup
 
-Once the server sets your `groupMiningRate` above 0, the bot picks it up automatically — no code changes needed.
+After first login, token saved to `token.json` + `token-backup.json` (chmod 600).
 
-## Saving Your Token
-
-After your first login, the bot saves your token to `token.json` (and `token-backup.json` as a backup). This file lets you claim without logging in again. Keep a copy somewhere safe — if you lose both, you'll need to re-login via OTP.
-
-**Backup** (also done automatically):
 ```bash
+# Manual backup
 cp token.json ~/token-backup.json
-```
 
-**Restore**:
-```bash
+# Restore
 cp ~/token-backup.json token.json
 chmod 600 token.json
 ```
 
-You can also manually paste a token from packet capture (e.g. HTTP Catcher on your phone):
-```bash
-echo '{"access":"eyJ...","refresh":"eyJ...","saved_at":0}' > token.json
-chmod 600 token.json
-```
-
-Only `access` is required. `refresh` is optional but helps auto-renew.
-
-## How It Works
-
-1. First run: sends OTP to your Gmail, IMAP grabs it, verifies, saves token
-2. Bot reads `nextFrame` from the API — knows exactly when you can claim next
-3. Counts down in real-time. When timer hits zero: checks claimable, triggers ads session, claims
-4. Sends Telegram notification with claimed amount + rate
-5. Token never logs out. If expired, refreshes automatically. Only re-logins if refresh token also dies.
-
-## Token Types
-
-| App Display | Token | What it is |
-|---|---|---|
-| Gold | **ITLG** | What you mine. This is the airdrop token. |
-| Interlink | ITL | Utility token, separate supply |
-| Silver / Diamond | — | Boosters, not separate tokens |
-
-You're mining **ITLG**.
-
 ## Files
 
 ```
-setup.py              # interactive setup — fills config.json with prompts
-bot.py                # the bot (loop mode + --once + --login)
+setup.py              # interactive setup
+bot.py                # the bot (v2.0)
 config.json           # your config (gitignored)
-config.json.example   # template with empty fields
-token.json            # saved token (gitignored, auto-created)
-token-backup.json     # backup copy (gitignored, auto-created)
-claim_state.json      # actual claim history for rate display (gitignored, auto-created)
+token.json            # saved token (gitignored)
+claim_state.json      # claim history (gitignored)
 ```
 
 ## OTP Not Arriving?
 
-If `python bot.py --login` says "Email has been sent" but the OTP never arrives:
-
 1. **Check Spam/Junk** — Gmail sometimes routes Interlink emails to Spam
-2. **Wait 1-2 minutes** — Interlink can be slow to send OTP
-3. **Verify Gmail App Password** — make sure it's the 16-letter App Password, not your Gmail password
-4. **Login from the app first** — open the InterLink app on your phone, login once. This registers your device with Interlink's servers. Then run `python bot.py --login`
-5. **Check IMAP access** — make sure IMAP is enabled in Gmail settings (Settings → See all settings → Forwarding and POP/IMAP → IMAP Access: Enable)
-6. **Retry** — the bot resends OTP automatically (up to 3 times, 3 minutes each)
-
-The bot generates a unique random `deviceId` for each install. If OTP still doesn't arrive after all steps above, try deleting `config.json` and re-running `setup.py` to get a fresh device fingerprint.
-
-## Notes
-
-- Your token is saved locally with `chmod 600`. Don't share `config.json` or `token.json`.
-- If OTP doesn't arrive, the bot resends automatically (up to 3 times, 3 minutes each).
-- One script, one account, one dependency (`requests`).
-- Group mining is claimed automatically every 24h via a separate endpoint.
-- `burnedCycles` and `itlgRecoverable` are display-only — the API has a recovery endpoint (`/recovery/claim`) but it's not implemented in the bot yet.
-
-## Anti-Detection
-
-The bot mimics human behavior to avoid flagging:
-
-- **Random device fingerprint** — each account gets a random phone model (Samsung, Xiaomi, Pixel, OPPO, etc.) assigned on first run, stored in `config.json`
-- **Human-like timing** — waits 30-120 seconds after claim window opens before claiming (humans don't claim at exactly 00:00:00)
-- **No constant polling** — checks every 10 seconds, not every 1 second
-- **Same endpoint as the app** — uses the exact same API endpoints and headers as the official Interlink Android app
-
-You can override the device fingerprint by editing `deviceModel` and `deviceBrand` in `config.json` if you want it to match your real phone.
+2. **Wait 1-2 minutes** — Interlink can be slow
+3. **Verify Gmail App Password** — must be 16-letter App Password, not Gmail password
+4. **Login from the app first** — open InterLink app, login once, then run `bot.py --login`
+5. **Check IMAP access** — Gmail Settings → Forwarding and POP/IMAP → Enable IMAP
 
 ## License
 
@@ -239,7 +147,5 @@ MIT
 ---
 
 ## ☕ Support
-
-Kalau bot ini membantu, bisa traktir kopi:
 
 [![Saweria](https://img.shields.io/badge/Saweria-ffb13b?style=for-the-badge&logo=ko-fi&logoColor=white)](https://saweria.co/febfrmn)
