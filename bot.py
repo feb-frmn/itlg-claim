@@ -381,6 +381,90 @@ def claim_airdrop(token, device_id):
     r = api_post("/token/claim-airdrop", {}, token=token, device_id=device_id)
     return safe_json(r)
 
+# ─── Group mining (24h cycle, 1 claim = all groups) ───────────────────────────
+GROUP_INTERVAL = 24 * 60 * 60  # 24 hours
+
+def get_group_mining_list(token, device_id):
+    """Get list of all groups + next claim time."""
+    r = api_post("/group-mining/get-list-group-mining", {}, token=token, device_id=device_id)
+    d = safe_json(r)
+    return d.get("data") if d.get("statusCode") == 200 else None
+
+def claim_group_mining(token, device_id, group_id):
+    """Claim group mining for one group (claims ALL groups at once)."""
+    r = api_post("/group-mining/claim-group-mining", {"groupId": group_id}, token=token, device_id=device_id)
+    return safe_json(r)
+
+def attempt_group_claim(cfg, token):
+    """Check + claim group mining (24h cycle). Returns (token, claimed, next_time_ms)."""
+    device_id = cfg["deviceId"]
+    data = get_group_mining_list(token, device_id)
+    if not data:
+        log("err", "Failed to fetch group mining list.")
+        return token, False, None
+
+    groups = data.get("groups", [])
+    is_claimable = data.get("isClaimable", False)
+    next_time = data.get("nextTimeClaim")
+    already_claimed = data.get("requesterHasClaimedToday", False)
+
+    # Find a claimable group
+    claimable_group = None
+    total_reward = 0
+    for g in groups:
+        total_reward += g.get("totalReward", 0)
+        if g.get("canClaim"):
+            claimable_group = g
+            break
+
+    if not claimable_group:
+        if already_claimed:
+            log("info", f"Group mining: already claimed today. {len(groups)} groups, total reward pool: {total_reward} ITLG")
+        else:
+            log("info", f"Group mining: not ready yet. {len(groups)} groups, total reward pool: {total_reward} ITLG")
+        return token, False, next_time
+
+    gid = claimable_group["groupId"]
+    log("ok", f"Group mining claimable! Group: {gid} ({len(groups)} groups, pool: {total_reward} ITLG)")
+
+    # Human-like delay
+    jitter = random.randint(30, 120)
+    log("info", f"Waiting {jitter}s before group claim (human-like)...")
+    time.sleep(jitter)
+
+    balance_before = get_balance(token, device_id)
+    result = claim_group_mining(token, device_id, gid)
+    status = result.get("statusCode")
+    msg = result.get("message", "")
+
+    if status == 200:
+        time.sleep(2)
+        balance_after = get_balance(token, device_id)
+        claimed = (balance_after - balance_before) if balance_before is not None and balance_after is not None else None
+        log("ok", f"Group mining claimed! +{claimed if claimed is not None else '?'} ITLG")
+        if balance_before is not None and balance_after is not None:
+            log("info", f"Balance: {balance_before} → {balance_after} ITLG")
+        # Telegram notification
+        try:
+            send_telegram_notif(cfg, {
+                "claimed": claimed,
+                "before": balance_before,
+                "after": balance_after,
+                "rate_per_claim": claimed or 0,
+                "rate_per_day": None,
+                "group_rate": total_reward,
+            })
+        except Exception as e:
+            log("warn", f"Telegram notif failed: {e}")
+        return token, True, next_time
+
+    if status == 400 and "ALREADY_CLAIMED" in str(msg).upper():
+        log("info", "Group mining: already claimed today.")
+        return token, False, next_time
+
+    log("err", f"Group mining claim failed ({status}): {msg}")
+    return token, False, next_time
+
 # ─── Rates ────────────────────────────────────────────────────────────────────
 def get_rates(ti, state=None):
     """Extract rate info for dashboard + notifications."""
@@ -588,29 +672,51 @@ def run_once(cfg):
         nf = ic.get("nextFrame") if ic else None
         if nf:
             remain = int((nf - time.time() * 1000) / 1000)
-            log("info", f"Next claim in {format_countdown(max(0, remain))}")
+            log("info", f"Mining next in {format_countdown(max(0, remain))}")
+
+    # Group mining check
+    log("info", "Checking group mining...")
+    token, group_claimed, group_next = attempt_group_claim(cfg, token)
+    if group_next:
+        remain = int((group_next - time.time() * 1000) / 1000)
+        log("info", f"Group mining next in {format_countdown(max(0, remain))}")
 
 def run_loop(cfg):
-    log("info", "Loop mode. Reading next claim time from API...")
+    log("info", "Loop mode. Mining 4h + Group mining 24h.")
     token = get_session(cfg)
     if not token:
         log("err", "No valid token. Run: python bot.py --login")
         return
 
+    # ─── Initial check: claim both if available ───
     ic, _ = show_dashboard(token, cfg["deviceId"])
     if ic and ic.get("isClaimable"):
         token, _ = attempt_claim(cfg, token)
 
+    # Group mining initial check
+    token, _, group_next = attempt_group_claim(cfg, token)
+
+    # Get timers
     ic = check_claimable(token, cfg["deviceId"])
-    next_frame = ic.get("nextFrame") or (time.time() * 1000 + CLAIM_INTERVAL * 1000)
+    mining_next = ic.get("nextFrame") or (time.time() * 1000 + CLAIM_INTERVAL * 1000)
+    if not group_next:
+        group_next = time.time() * 1000 + GROUP_INTERVAL * 1000
+
+    log("info", f"Mining next: {format_countdown((mining_next - time.time() * 1000) / 1000)}")
+    log("info", f"Group next:  {format_countdown((group_next - time.time() * 1000) / 1000)}")
 
     while True:
-        remain_s = max(0, (next_frame - time.time() * 1000) / 1000)
-        print(f"\r  {C.CY}⏰ Next claim in {format_countdown(remain_s)}{C.R}     ", end="", flush=True)
-        if remain_s <= 0:
+        now_ms = time.time() * 1000
+        mining_remain = max(0, (mining_next - now_ms) / 1000)
+        group_remain = max(0, (group_next - now_ms) / 1000)
+        next_label = "mining" if mining_remain < group_remain else "group"
+        next_secs = min(mining_remain, group_remain)
+
+        print(f"\r  {C.CY}⏰ Mining: {format_countdown(mining_remain)} | Group: {format_countdown(group_remain)}{C.R}     ", end="", flush=True)
+
+        if mining_remain <= 0:
             print()
-            log("step", "Claim time!")
-            # Human-like: small random delay before going for claim
+            log("step", "Mining claim time!")
             human_delay = random.randint(10, 60)
             log("info", f"Waiting {human_delay}s (human-like)...")
             time.sleep(human_delay)
@@ -620,11 +726,27 @@ def run_loop(cfg):
                 token = get_session(cfg)
             if token:
                 token, claimed = attempt_claim(cfg, token)
-                ic = check_claimable(token, cfg["deviceId"])
-                next_frame = ic.get("nextFrame") or (time.time() * 1000 + CLAIM_INTERVAL * 1000)
+                if claimed:
+                    ic = check_claimable(token, cfg["deviceId"])
+                    mining_next = ic.get("nextFrame") or (time.time() * 1000 + CLAIM_INTERVAL * 1000)
+                else:
+                    mining_next = time.time() * 1000 + 60 * 1000  # retry in 1 min
+
+        if group_remain <= 0:
+            print()
+            log("step", "Group mining claim time!")
+            human_delay = random.randint(10, 60)
+            log("info", f"Waiting {human_delay}s (human-like)...")
+            time.sleep(human_delay)
+            token = get_session(cfg)
+            if token:
+                token, claimed, group_next = attempt_group_claim(cfg, token)
+                if not group_next:
+                    group_next = time.time() * 1000 + GROUP_INTERVAL * 1000
             else:
-                next_frame = time.time() * 1000 + 60 * 1000
-        time.sleep(10)  # Poll every 10s, not 1s — less suspicious than constant pinging
+                group_next = time.time() * 1000 + 60 * 1000
+
+        time.sleep(10)
 
 
 # ─── Status check (no login needed) ───────────────────────────────────────────
