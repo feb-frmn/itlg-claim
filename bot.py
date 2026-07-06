@@ -488,6 +488,58 @@ def get_session(cfg, allow_login=True):
     access, refresh = do_login(cfg)
     return access
 
+def ensure_token_valid(cfg, token, buffer=300):
+    """Check token validity, refresh if near expiry, auto-relogin if needed.
+    Args:
+        cfg: config dict
+        token: current access token
+        buffer: seconds before expiry to trigger refresh (default 5 min)
+    Returns: valid token or None
+    """
+    if not token:
+        return get_session(cfg)
+
+    remaining = (jwt_exp(token) or 0) - time.time()
+
+    # Token still valid for > buffer seconds
+    if remaining > buffer:
+        return token
+
+    # Token expiring soon or expired → try refresh
+    access, refresh = load_tokens()
+    if refresh:
+        log("warn", f"Token expiring in {max(0,int(remaining/60))}min, refreshing...")
+        new_access = do_refresh(cfg, refresh)
+        if new_access:
+            return new_access
+        log("warn", "Refresh failed.")
+
+    # Refresh failed → auto relogin via face
+    if cfg.get("facePhoto") and os.path.exists(cfg["facePhoto"]):
+        log("warn", "Auto relogin via face...")
+        access, refresh = do_face_login(cfg)
+        if access:
+            log("ok", "Auto relogin successful!")
+            return access
+        log("err", "Face relogin failed!")
+
+    # Face failed → send Telegram alert
+    try:
+        tg_token = cfg.get("tgBotToken", "")
+        tg_chat = cfg.get("tgChatId", "")
+        if tg_token and tg_chat:
+            import urllib.request
+            msg = "\u26a0\ufe0f <b>ITLG Bot</b>\nToken expired & auto-relogin failed!\nPlease login manually: <code>python bot.py --login-face</code>"
+            url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
+            data = json.dumps({"chat_id": tg_chat, "text": msg, "parse_mode": "HTML"}).encode()
+            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=10)
+    except Exception:
+        pass
+
+    log("err", "Auto relogin failed! Need manual intervention.")
+    return None
+
 # ─── API helpers ──────────────────────────────────────────────────────────────
 def get_user_info(token, device_id):
     r = api_get("/auth/current-user-full?include=userInfo,token,isClaimable", token, device_id)
@@ -948,10 +1000,11 @@ def run_loop(cfg):
             human_delay = random.randint(10, 60)
             log("info", f"Waiting {human_delay}s (human-like)...")
             time.sleep(human_delay)
-            token = get_session(cfg)
+            token = ensure_token_valid(cfg, token)
             if not token:
+                log("err", "Token invalid after relogin. Retrying in 60s...")
                 time.sleep(60)
-                token = get_session(cfg)
+                token = ensure_token_valid(cfg, get_session(cfg, allow_login=False) or "")
             if token:
                 token, claimed = attempt_claim(cfg, token)
                 if claimed:
@@ -974,7 +1027,7 @@ def run_loop(cfg):
             human_delay = random.randint(10, 60)
             log("info", f"Waiting {human_delay}s (human-like)...")
             time.sleep(human_delay)
-            token = get_session(cfg)
+            token = ensure_token_valid(cfg, token)
             if token:
                 token, claimed, group_next = attempt_group_claim(cfg, token)
                 if not group_next:
