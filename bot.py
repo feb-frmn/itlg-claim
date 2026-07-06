@@ -899,11 +899,10 @@ def stop_bot():
         for pid in pids:
             try:
                 os.kill(int(pid), signal.SIGTERM)
-                log("ok", f"Sent SIGTERM to PID {pid}")
             except ProcessLookupError:
                 pass
             except Exception as e:
-                log("warn", f"Could not kill PID {pid}: {e}")
+                log("warn", f"Could not kill: {e}")
         time.sleep(2)
         # Force kill if still alive
         still = subprocess.getoutput('pgrep -f "python3 bot.py"').strip()
@@ -911,7 +910,6 @@ def stop_bot():
         for pid in still:
             try:
                 os.kill(int(pid), signal.SIGKILL)
-                log("warn", f"Force killed PID {pid}")
             except Exception:
                 pass
         if not still:
@@ -936,7 +934,7 @@ def show_status():
     import subprocess
     try:
         pid = subprocess.getoutput('pgrep -f "python3 bot.py"').strip().split("\n")[0]
-        bot_status = f"✅ Running (PID {pid})" if pid else "❌ NOT running"
+        bot_status = "✅ Running" if pid else "❌ NOT running"
     except Exception:
         bot_status = "❓ Unknown"
 
@@ -1101,7 +1099,7 @@ def main():
     existing = subprocess.getoutput('pgrep -f "python3 bot.py"').strip().split("\n")
     existing = [p for p in existing if p and p != str(os.getpid())]
     if existing and not args.restart:
-        log("warn", f"Bot already running (PID {existing[0]}). Use --stop first or --status to check.")
+        log("warn", "Bot already running. Use --stop first or --status to check.")
         return
 
     MAX_RESTARTS = 50
