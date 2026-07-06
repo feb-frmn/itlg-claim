@@ -1026,34 +1026,53 @@ def cleanup_old_files(max_age_days=2):
 
 # ─── Stop bot ──────────────────────────────────────────────────────────────────
 STOP_FILE = os.path.join(SCRIPT_DIR, ".stop")
+PID_FILE  = os.path.join(SCRIPT_DIR, ".bot.pid")
 
 def stop_bot():
-    """Stop the running bot gracefully using stopfile."""
+    """Stop the running bot gracefully using stopfile + PID file."""
     # Write stopfile — the running bot checks for this and exits cleanly
     with open(STOP_FILE, "w") as f:
         f.write(str(int(time.time())))
     log("info", "Stop signal sent. Bot will exit within 10 seconds.")
-    # Also try SIGTERM as backup
-    import subprocess, signal
-    try:
-        pids = subprocess.getoutput('pgrep -f "python3 bot\\.py$"').strip().split("\n")
-        my_pid = str(os.getpid())
-        pids = [p for p in pids if p and p != my_pid and p.strip()]
-        for pid in pids:
-            try:
-                os.kill(int(pid), signal.SIGTERM)
-            except (ProcessLookupError, ValueError):
-                pass
-        if pids:
-            log("ok", f"Sent stop signal to {len(pids)} process(es).")
-        else:
-            log("info", "No running bot process found (but stopfile created).")
-    except Exception as e:
-        log("warn", f"Could not signal process: {e}")
-    # Clean up stopfile after 15s
+    # Try PID file first (reliable), fall back to pgrep
+    import signal
+    killed = False
+    if os.path.exists(PID_FILE):
+        try:
+            pid = int(open(PID_FILE).read().strip())
+            os.kill(pid, signal.SIGTERM)
+            log("ok", f"Sent SIGTERM to PID {pid}.")
+            killed = True
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass
+    if not killed:
+        import subprocess
+        try:
+            pids = subprocess.getoutput('pgrep -f "python3 bot\\.py"').strip().split("\n")
+            my_pid = str(os.getpid())
+            for p in pids:
+                p = p.strip()
+                if p and p != my_pid:
+                    try:
+                        cmdline = subprocess.getoutput(f'ps -p {p} -o args=').strip()
+                        if 'bot.py' in cmdline and '--status' not in cmdline and '--once' not in cmdline:
+                            os.kill(int(p), signal.SIGTERM)
+                            log("ok", f"Sent SIGTERM to PID {p}.")
+                            killed = True
+                    except (ProcessLookupError, ValueError):
+                        pass
+        except Exception as e:
+            log("warn", f"Could not signal process: {e}")
+    if not killed:
+        log("info", "No running bot process found (but stopfile created).")
+    # Clean up PID file + stopfile
     time.sleep(2)
-    if os.path.exists(STOP_FILE):
-        os.remove(STOP_FILE)
+    for f in (PID_FILE, STOP_FILE):
+        if os.path.exists(f):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
 
 
 # ─── Status check (live API call for accurate timers) ─────────────────────────
@@ -1068,13 +1087,32 @@ def show_status():
     h, m = ago // 3600, (ago % 3600) // 60
     last_claim_wib = datetime.fromtimestamp(updated, tz=WIB).strftime("%H:%M WIB") if updated > 0 else "N/A"
 
-    # Bot running?
-    import subprocess
-    try:
-        pid = subprocess.getoutput('pgrep -f "python3 bot.py"').strip().split("\n")[0]
-        bot_status = "✅ Running" if pid else "❌ NOT running"
-    except Exception:
-        bot_status = "❓ Unknown"
+    # Bot running? (use PID file first, fall back to filtered pgrep)
+    bot_status = "❌ NOT running"
+    if os.path.exists(PID_FILE):
+        try:
+            pid = int(open(PID_FILE).read().strip())
+            os.kill(pid, 0)  # check if alive
+            bot_status = f"✅ Running (PID {pid})"
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass
+    if bot_status == "❌ NOT running":
+        import subprocess
+        try:
+            pids = subprocess.getoutput('pgrep -f "python3 bot\\.py"').strip().split("\n")
+            for p in pids:
+                p = p.strip()
+                if not p:
+                    continue
+                try:
+                    cmdline = subprocess.getoutput(f'ps -p {p} -o args=').strip()
+                    if 'bot.py' in cmdline and '--status' not in cmdline and '--once' not in cmdline and '--login' not in cmdline and '--stop' not in cmdline and '--restart' not in cmdline:
+                        bot_status = f"✅ Running (PID {p})"
+                        break
+                except Exception:
+                    pass
+        except Exception:
+            bot_status = "❓ Unknown"
 
     # ─── LIVE API CALL for real timers ───
     cfg = load_config()
@@ -1102,12 +1140,15 @@ def show_status():
         # Live mining timer
         try:
             ic = check_claimable(token, device_id)
-            nf = ic.get("nextFrame")
-            if nf:
-                remain = max(0, int((nf - time.time() * 1000) / 1000))
-                mining_next_str = format_countdown(remain)
-            else:
+            if ic.get("isClaimable"):
                 mining_next_str = "claimable now!"
+            else:
+                nf = ic.get("nextFrame")
+                if nf:
+                    remain = max(0, int((nf - time.time() * 1000) / 1000))
+                    mining_next_str = format_countdown(remain)
+                else:
+                    mining_next_str = "claimable now!"
         except Exception as e:
             mining_next_str = f"API error: {e}"
         
@@ -1133,7 +1174,7 @@ def show_status():
         except Exception:
             pass
         
-        # Live user info for refs/streak/recoverable
+        # Live user info for refs/streak/recoverable + last claim time
         try:
             data = get_user_info(token, device_id)
             if data:
@@ -1148,6 +1189,18 @@ def show_status():
                 rec = f"{ti.get('itlgRecoverable', 0)}"
                 # Update balance from live data
                 bal = ti.get("interlinkGoldTokenAmount", bal)
+                # Update last claim time from live API (ground truth)
+                lct = ti.get("lastClaimTime")
+                if lct:
+                    lct_sec = int(lct / 1000)
+                    ago_live = int(time.time() - lct_sec)
+                    h_live, m_live = ago_live // 3600, (ago_live % 3600) // 60
+                    last_claim_wib = datetime.fromtimestamp(lct_sec, tz=WIB).strftime("%H:%M WIB")
+                    h, m = h_live, m_live  # override stale local values
+                    # Also sync local state balance to avoid desync
+                    if state.get("balance", 0) != bal:
+                        lc_amount = state.get("last_claim", 0)
+                        updated_at = state.get("updated_at", 0)
         except Exception:
             pass
     else:
@@ -1259,13 +1312,26 @@ def main():
     # ─── Main loop with crash-proof auto-restart ───
     cleanup_old_files(max_age_days=2)
     
-    # Don't start if already running
-    import subprocess
-    existing = subprocess.getoutput('pgrep -f "python3 bot.py"').strip().split("\n")
-    existing = [p for p in existing if p and p != str(os.getpid())]
-    if existing and not args.restart:
-        log("warn", "Bot already running. Use --stop first or --status to check.")
-        return
+    # Don't start if already running (use PID file for reliability)
+    if os.path.exists(PID_FILE):
+        try:
+            old_pid = int(open(PID_FILE).read().strip())
+            # Check if process is actually alive
+            os.kill(old_pid, 0)
+            log("warn", f"Bot already running (PID {old_pid}). Use --stop first or --status to check.")
+            return
+        except (ValueError, ProcessLookupError, PermissionError):
+            # Stale PID file — process is dead
+            try:
+                os.remove(PID_FILE)
+            except Exception:
+                pass
+    # Write our PID
+    try:
+        with open(PID_FILE, "w") as f:
+            f.write(str(os.getpid()))
+    except Exception:
+        pass
 
     MAX_RESTARTS = 50
     restart_count = 0
@@ -1302,6 +1368,13 @@ def main():
     
     if restart_count >= MAX_RESTARTS:
         log("err", f"Max restarts ({MAX_RESTARTS}) reached. Bot stopped. Check logs.")
+
+    # Clean up PID file on exit
+    if os.path.exists(PID_FILE):
+        try:
+            os.remove(PID_FILE)
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     main()
