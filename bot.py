@@ -698,7 +698,12 @@ def attempt_claim(cfg, token):
         return token, True
 
     if status == 400 and "TOO_EARLY" in str(msg).upper():
-        log("info", "Already claimed. Wait for next cycle.")
+        log("info", "Already claimed (maybe manual?). Syncing next timer from API...")
+        ic_new = check_claimable(token, device_id)
+        nf = ic_new.get("nextFrame")
+        if nf:
+            remain = int((nf - time.time() * 1000) / 1000)
+            log("info", f"Next claim in {format_countdown(max(0, remain))}")
         return token, False
 
     if status == 500:
@@ -816,7 +821,13 @@ def run_loop(cfg):
                     ic = check_claimable(token, cfg["deviceId"])
                     mining_next = ic.get("nextFrame") or (time.time() * 1000 + CLAIM_INTERVAL * 1000)
                 else:
-                    mining_next = time.time() * 1000 + 60 * 1000  # retry in 1 min
+                    # Claim failed — re-fetch timer from API instead of blind 1-min retry
+                    ic = check_claimable(token, cfg["deviceId"])
+                    nf = ic.get("nextFrame")
+                    if nf:
+                        mining_next = nf
+                    else:
+                        mining_next = time.time() * 1000 + 300 * 1000  # fallback: retry in 5 min
 
         if group_remain <= 0:
             print()
@@ -846,7 +857,6 @@ def show_status():
     updated = state.get("updated_at", 0)
     ago = int(time.time() - updated)
     h, m = ago // 3600, (ago % 3600) // 60
-    # WIB timestamp for last claim
     last_claim_wib = datetime.fromtimestamp(updated, tz=WIB).strftime("%H:%M WIB") if updated > 0 else "N/A"
 
     # Bot running?
@@ -857,17 +867,46 @@ def show_status():
         bot_status = "❓ Unknown"
 
     # Parse log for extras
-    refs, nxt, rec = "N/A", "~4h", "N/A"
+    refs = "N/A"
+    nxt = "~4h"
+    rec = "N/A"
+    streak_burned = "N/A"
+    group_status = "N/A"
+    group_next = "N/A"
+    per_claim = "N/A"
+    per_day = "N/A"
+    last_group_claim = "N/A"
+    last_recovery = "N/A"
     try:
-        log = open(os.path.join(SCRIPT_DIR, "interlink.log")).read()
-        r = re.findall(r"Referral\s+([\d.]+ \(\d+ refs\))", log)
-        n = re.findall(r"Next claim in ([\dh ms]+)", log)
-        c = re.findall(r"Recoverable\s+(\d+) ITLG", log)
+        raw_log = open(os.path.join(SCRIPT_DIR, "interlink.log")).read()
+        r = re.findall(r"Referral\s+([\d.]+ \(\d+ refs\))", raw_log)
+        n = re.findall(r"Next claim in ([\dh ms]+)", raw_log)
+        c = re.findall(r"Recoverable\s+(\d+) ITLG", raw_log)
+        sb = re.findall(r"Streak/Burned\s+(\d+ / \d+)", raw_log)
+        gs = re.findall(r"Group\s+.*?(pending activation|[\d.]+/day)", raw_log)
+        gn = re.findall(r"Group next:\s+([\dh m]+)", raw_log)
+        pc = re.findall(r"Avg per claim:\s+([\d.]+)", raw_log)
+        pd = re.findall(r"Per day:\s+([\d.]+) ITLG", raw_log)
+        lgc = re.findall(r"Group mining claimed!\s+\+([\d?]+) ITLG", raw_log)
+        lrc = re.findall(r"Recovery complete!\s+\+([\d]+) ITLG", raw_log)
         if r: refs = r[-1]
         if n: nxt = n[-1].strip()
         if c: rec = c[-1]
+        if sb: streak_burned = sb[-1]
+        if gs: group_status = gs[-1]
+        if gn: group_next = gn[-1].strip()
+        if pc: per_claim = pc[-1]
+        if pd: per_day = pd[-1]
+        if lgc: last_group_claim = f"+{lgc[-1]} ITLG"
+        if lrc: last_recovery = f"+{lrc[-1]} ITLG"
     except Exception:
         pass
+
+    # Compute from state if log parsing failed
+    if per_claim == "N/A" and history:
+        avg = round(sum(history) / len(history), 1)
+        per_claim = f"{avg} ITLG"
+        per_day = f"{round(avg * 6, 1)} ITLG"
 
     print(f"\n  {C.CY}{C.B}╔══════════════════════════════════════╗{C.R}")
     print(f"  {C.CY}{C.B}║   Interlink ITLG — Status             ║{C.R}")
@@ -877,9 +916,18 @@ def show_status():
     print(f"  🎯 Last claim: +{lc} ITLG ({h}h {m}m ago, {last_claim_wib})")
     if history:
         print(f"  📊 History: {' → '.join(str(x) for x in history[-5:])}")
+    print(f"  📈 Per claim: {per_claim} | Per day: {per_day}")
     print(f"  👥 Refs: {refs}")
+    print(f"  🔥 Streak/Burned: {streak_burned}")
     print(f"  💎 Recoverable: {rec} ITLG")
-    print(f"  ⏳ Next claim: {nxt}")
+    if last_recovery != "N/A":
+        print(f"  ♻️ Last recovery: {last_recovery}")
+    print(f"  ─────────────────────────────")
+    print(f"  👥 Group: {group_status}")
+    if last_group_claim != "N/A":
+        print(f"  🎯 Last group claim: {last_group_claim}")
+    print(f"  ⏳ Group next: {group_next}")
+    print(f"  ⏳ Mining next: {nxt}")
     print()
 
 def main():
