@@ -892,7 +892,8 @@ def main():
     print(f"\n  {C.CY}{C.B}╔════════════════════════════════════╗{C.R}")
     print(f"  {C.CY}{C.B}║   Interlink Labs Auto Claim Bot     ║{C.R}")
     print(f"  {C.CY}{C.B}║   Login once · Claim every 4h       ║{C.R}")
-    print(f"  {C.CY}{C.B}╚════════════════════════════════════╝{C.R}\n")
+    print(f"  {C.CY}{C.B}╚════════════════════════════════════╝{C.R}")
+    print(f"  {C.DIM}  ☕ Support: https://saweria.co/febfrmn{C.R}\n")
 
     cfg = load_config()
 
