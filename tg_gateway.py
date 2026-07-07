@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ITLG Telegram Gateway v2.1 — Command interface for ITLG Claim Bot.
+Gateway Telegram ITLG v2.1 — Interface perintah untuk Bot Klaim ITLG.
 
 v2.1 changelog:
   - /groupclaim command (force group mining claim)
@@ -112,24 +112,24 @@ def poll(token, offset=None):
 
 def cmd_start(cid, token):
     send(cid,
-        "🤖 <b>ITLG Claim Bot</b>\n"
+        "🤖 <b>Bot Klaim ITLG</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Auto-claims ITLG every 4h.\n"
+        "Otomatis klaim ITLG setiap 4 jam.\n"
         "Group mining every 24h.\n"
         "Auto-recovery of burned cycles.\n\n"
-        "Tap /help for commands.",
+        "Ketik /help untuk daftar perintah.",
         token)
 
 def cmd_help(cid, token):
     send(cid,
         "📖 <b>Commands</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "/status       Full dashboard\n"
+        "/status       Dashboard lengkap\n"
         "/balance      Quick balance\n"
-        "/claim        Force mine claim\n"
-        "/groupclaim   Force group claim\n"
-        "/stop         Stop bot\n"
-        "/restart      Restart bot\n"
+        "/claim        Paksa klaim mining\n"
+        "/groupclaim   Paksa klaim group\n"
+        "/stop         Hentikan bot\n"
+        "/restart      Restart ulang bot\n"
         "/help         This message",
         token)
 
@@ -140,8 +140,8 @@ def cmd_status(cid, token):
 
     if not tk:
         send(cid,
-            "❌ <b>No valid token</b>\n"
-            "Run: <code>python3 bot.py --login-face</code>",
+            "❌ <b>Token tidak valid</b>\n"
+            "Jalankan: <code>python3 bot.py --login-face</code>",
             token)
         return
 
@@ -151,7 +151,7 @@ def cmd_status(cid, token):
     nf = ic.get("nextFrame")
 
     if claimable:
-        mining_str = "✅ <b>Claimable now!</b>"
+        mining_str = "✅ <b>Bisa diklaim sekarang!</b>"
     elif nf:
         remain = max(0, int((nf - time.time() * 1000) / 1000))
         mining_str = f"⏳ {countdown(remain)}"
@@ -172,15 +172,15 @@ def cmd_status(cid, token):
         ti = data.get("token", {})
         bal = ti.get("interlinkGoldTokenAmount", 0)
         total_ref = ti.get("totalReferral", 0)
-        ref_dir = ti.get("directReferralsHashRate", 0) or 0
-        ref_ind = ti.get("indirectReferralsHashRate", 0) or 0
+        ref_dir = ti.get("directReferralHashRate", 0) or 0
+        ref_ind = ti.get("indirectReferralHashRate", 0) or 0
         refs_str = f"{round(ref_dir + ref_ind, 2)} ({total_ref} refs)"
         streak = ti.get("burningStreak", 0)
         burned = ti.get("burnedCycles", 0)
         streak_str = f"{streak} / {burned}"
-        recover_str = f"{ti.get('itlgRecoverable', 0)} ITLG"
+        recover_str = f"{ti.get('itlgBisa dipulihkan', 0)} ITLG"
 
-        # Last claim time from API
+        # Klaim terakhir time from API
         lct = ti.get("lastClaimTime")
         if lct:
             lct_sec = int(lct / 1000)
@@ -222,24 +222,24 @@ def cmd_status(cid, token):
 
     # ── Bot status ──
     pid = bot_pid()
-    bot_status = f"✅ Running (PID {pid})" if pid else "❌ Stopped"
+    bot_status = f"✅ Berjalan (PID {pid})" if pid else "❌ Berhenti"
 
     send(cid,
-        f"📊 <b>ITLG Dashboard</b>\n"
+        f"📊 <b>Dashboard ITLG</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"💰 Balance      <b>{bal}</b> ITLG\n"
+        f"💰 Saldo      <b>{bal}</b> ITLG\n"
         f"⛏️ Mining       {mining_str}\n"
-        f"📈 Per claim    {per_claim_str}\n"
-        f"📈 Per day      {per_day_str}\n"
-        f"🎯 Last claim   {last_claim_str}\n"
+        f"📈 Per klaim    {per_claim_str}\n"
+        f"📈 Per hari      {per_day_str}\n"
+        f"🎯 Klaim terakhir   {last_claim_str}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👥 Referrals    {refs_str}\n"
+        f"👥 Referral    {refs_str}\n"
         f"🔥 Streak/Burn  {streak_str}\n"
-        f"💎 Recoverable  {recover_str}\n"
+        f"💎 Bisa dipulihkan  {recover_str}\n"
         f"♻️ Recovery      {recovery_status}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"👥 Group        {group_str}\n"
-        f"⏳ Group next   {group_next_str}\n"
+        f"⏳ Group berikutnya   {group_next_str}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🤖 Bot          {bot_status}\n"
         f"🕐 {fmt_wib()} WIB",
@@ -249,7 +249,7 @@ def cmd_balance(cid, token):
     cfg = load_config()
     tk = get_valid_token(cfg)
     if not tk:
-        send(cid, "❌ No valid token. Run: <code>python3 bot.py --login-face</code>", token)
+        send(cid, "❌ Token tidak valid. Jalankan: <code>python3 bot.py --login-face</code>", token)
         return
     device_id = cfg.get("deviceId", "")
     bal = itlg.get_balance(tk, device_id)
@@ -272,7 +272,7 @@ def cmd_claim(cid, token):
     cfg = load_config()
     tk = get_valid_token(cfg)
     if not tk:
-        send(cid, "❌ No valid token. Run: <code>python3 bot.py --login-face</code>", token)
+        send(cid, "❌ Token tidak valid. Jalankan: <code>python3 bot.py --login-face</code>", token)
         return
     device_id = cfg.get("deviceId", "")
 
@@ -445,7 +445,7 @@ def cmd_groupclaim(cid, token):
     cfg = load_config()
     tk = get_valid_token(cfg)
     if not tk:
-        send(cid, "❌ No valid token. Run: <code>python3 bot.py --login-face</code>", token)
+        send(cid, "❌ Token tidak valid. Jalankan: <code>python3 bot.py --login-face</code>", token)
         return
 
     send(cid, "👥 Checking group mining...", token)
@@ -479,7 +479,7 @@ def main():
     owner = cfg.get("tgChatId")
 
     if not token:
-        print("❌ tgBotToken not set. Run: python3 setup.py")
+        print("❌ tgBotToken not set. Jalankan: python3 setup.py")
         sys.exit(1)
 
     try:
@@ -492,7 +492,7 @@ def main():
         sys.exit(1)
 
     print(f"👤 Owner: {owner}")
-    print(f"🤖 Bot: {'Running' if bot_pid() else 'Stopped'}")
+    print(f"🤖 Bot: {'Berjalan' if bot_pid() else 'Berhenti'}")
     print(f"Listening...\n")
 
     offset = None

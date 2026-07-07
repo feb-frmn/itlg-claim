@@ -1,4 +1,4 @@
-# Interlink Auto Claim
+# ITLG Claim Bot v2.2 — Full Indonesia
 
 ```
 ███████╗███████╗██████╗       ███████╗██████╗ ███╗   ███╗███╗   ██╗
@@ -9,9 +9,19 @@
 ╚═╝     ╚══════╝╚═════╝       ╚═╝     ╚═╝  ╚═╝╚═╝     ╚═╝╚═╝  ╚═══╝
 ```
 
-Auto-claim $ITLG from Interlink Labs. Mining, group mining & recovery — fully automatic, crash-proof.
+Auto claim ITLG dari Interlink Labs. Mining 4 jam, group mining, recovery otomatis. Full bahasa Indonesia, cepat, dan bebas bug.
 
-Single Python script. Login once with OTP, then it claims forever. Sends Telegram notification on every successful claim and crash.
+Satu script Python. Login sekali pakai OTP atau selfie, lalu klaim selamanya. Notifikasi Telegram full Indonesia.
+
+
+## What's New in v2.2
+
+- Full bahasa Indonesia di semua notifikasi Telegram dan log
+- Perbaikan format klaim: "✅ Klaim Berhasil" + "Per klaim" + "pending aktivasi" untuk group
+- Penambahan `demo_test.py` untuk testing output tanpa menjalankan bot
+- Perbaikan lag & bug pesan (group rate selalu muncul benar)
+- Header bot dan gateway sekarang full Indonesia
+- Lebih cepat dan stabil (human delay tetap ada untuk safety)
 
 ## Quick Start
 
@@ -38,13 +48,13 @@ python setup.py
 ## Commands
 
 ```
-python bot_v2_2.py               # Start (auto-restart on crash)
-python bot_v2_2.py --status      # Live status (API call, accurate timer)
-python bot_v2_2.py --stop        # Stop bot
-python bot_v2_2.py --restart     # Stop + start fresh
-python bot_v2_2.py --once        # Single run
-python bot_v2_2.py --login       # Force re-login OTP (email)
-python bot_v2_2.py --login-face  # Login with face photo (selfie)
+python bot.py               # Start (auto-restart on crash)
+python bot.py --status      # Live status (API call, accurate timer)
+python bot.py --stop        # Stop bot
+python bot.py --restart     # Stop + start fresh
+python bot.py --once        # Single run
+python bot.py --login       # Force re-login OTP (email)
+python bot.py --login-face  # Login with face photo (selfie)
 ```
 
 ## Login Methods
@@ -52,13 +62,13 @@ python bot_v2_2.py --login-face  # Login with face photo (selfie)
 ### Method 1: OTP (email)
 ```bash
 python setup.py          # enter loginId, passcode, email, imapPassword
-python bot_v2_2.py --login    # send OTP to email, enter code
+python bot.py --login    # send OTP to email, enter code
 ```
 
 ### Method 2: Selfie / Face Photo
 ```bash
 python setup.py          # enter loginId, passcode + selfie photo path
-python bot_v2_2.py --login-face  # upload photo → face verify → login
+python bot.py --login-face  # upload photo → face verify → login
 ```
 Face photo: clear selfie, good lighting, full face visible. Format: JPG/PNG.
 
@@ -173,3 +183,21 @@ MIT
 ## ☕ Support
 
 [![Saweria](https://img.shields.io/badge/Saweria-ffb13b?style=for-the-badge&logo=ko-fi&logoColor=white)](https://saweria.co/febfrmn)
+
+## Demo Test (baru di v2.2)
+
+Gunakan `demo_test.py` untuk melihat contoh output notifikasi Telegram tanpa perlu menjalankan bot:
+
+```bash
+python demo_test.py                    # tampilkan semua contoh
+python demo_test.py --claim-success    # contoh klaim mining berhasil (format utama)
+python demo_test.py --recovery         # contoh recovery
+python demo_test.py --group            # contoh group mining
+python demo_test.py --dashboard        # contoh tampilan /status
+```
+
+Ini sangat berguna untuk:
+- Verifikasi format pesan sebelum release
+- Testing notifikasi Telegram
+- Menunjukkan ke user seperti apa outputnya
+

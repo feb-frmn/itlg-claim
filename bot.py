@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-Interlink Labs Auto Claim — single account, login once, claim forever.
+Interlink Labs Auto Claim v2.2 — login sekali, klaim selamanya (mining + group + recovery). Full bahasa Indonesia.
 
-Usage:
-  python bot_v2_2.py              # loop mode (live countdown, auto-claim every 4h)
-  python bot_v2_2.py --once        # single run, check + claim if available, exit
-  python bot_v2_2.py --login       # force re-login (trigger OTP)
+Penggunaan:
+  python bot_v2_2.py              # mode loop (hitung mundur live, auto klaim tiap 4 jam)
+  python bot_v2_2.py --once        # jalankan sekali, cek + klaim jika bisa, lalu keluar
+  python bot_v2_2.py --login       # paksa login ulang (kirim OTP)
   python bot_v2_2.py --login-face --photo selfie.jpg  # face login with photo file
 
-The bot auto-claims every 4h and sends a Telegram notification on success
-(if tgBotToken + tgChatId are set in config.json).
+Bot auto claim ITLG Interlink Labs. Mining 4 jam, group mining, recovery otomatis.
+Login sekali saja, klaim selamanya. Notif Telegram full bahasa Indonesia.
 
-Config: config.json (run `python setup.py` for interactive setup)
+Config: config.json (jalankan `python setup.py` untuk setup interaktif)
 """
 
 import sys, os, json, time, imaplib, email, re, hashlib, base64, argparse, random
@@ -34,7 +34,7 @@ def fmt_wib(fmt="%Y-%m-%d %H:%M:%S"):
 # ─── Config ───────────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 API_BASE   = "https://prod.interlinklabs.ai/api/v1"
-APP_VER    = "5.0.5"
+APP_VER    = "5.0.5"  # v2.2 full Indonesian + bug fixes
 CLAIM_INTERVAL = 4 * 60 * 60
 OTP_TIMEOUT    = 180  # 3 minutes — Interlink can be slow to send OTP
 OTP_POLL_DELAY = 5
@@ -519,7 +519,7 @@ def check_recovery(token, device_id):
     d = safe_json(r)
     if d.get("statusCode") == 200:
         data = d.get("data", {})
-        return data.get("canRecover", False), data.get("totalRecoverable", 0)
+        return data.get("canRecover", False), data.get("totalBisa dipulihkan", 0)
     return False, 0
 
 def get_recoverable_burns(token, device_id):
@@ -528,7 +528,7 @@ def get_recoverable_burns(token, device_id):
     d = safe_json(r)
     if d.get("statusCode") == 200:
         burns = d.get("data", {}).get("data", [])
-        return [b for b in burns if b.get("isRecoverable")]
+        return [b for b in burns if b.get("isBisa dipulihkan")]
     return []
 
 def attempt_recovery(cfg, token):
@@ -577,6 +577,7 @@ def attempt_recovery(cfg, token):
                 "rate_per_claim": recovered_total,
                 "rate_per_day": None,
                 "group_rate": 0,
+                "claim_type": "recovery",
             })
         except Exception:
             pass
@@ -651,6 +652,7 @@ def attempt_group_claim(cfg, token):
                 "rate_per_claim": claimed or 0,
                 "rate_per_day": None,
                 "group_rate": total_reward,
+                "claim_type": "group",
             })
         except Exception as e:
             log("warn", f"Notif Telegram gagal: {e}")
@@ -696,29 +698,29 @@ def show_dashboard(token, device_id):
     total_ref   = ti.get("totalReferral", 0)
     streak      = ti.get("burningStreak", 0)
     burned      = ti.get("burnedCycles", 0)
-    recoverable = ti.get("itlgRecoverable", 0)
+    recoverable = ti.get("itlgBisa dipulihkan", 0)
     has_group   = rates["group"] > 0
     W = 38
     print()
     print(f"  {C.B}╔{'═'*W}╗{C.R}")
     print(f"  {C.B}║{C.R}  {ui.get('username', 'N/A')[:30]:<34}  {C.B}║{C.R}")
     print(f"  {C.B}╠{'═'*W}╣{C.R}")
-    print(f"  {C.B}║{C.R}  ITLG Balance   {str(gold):>28}  {C.B}║{C.R}")
-    print(f"  {C.B}║{C.R}  Last claim     {str(state.get('last_claim', 0)) + ' ITLG':>28}  {C.B}║{C.R}")
+    print(f"  {C.B}║{C.R}  Saldo ITLG   {str(gold):>28}  {C.B}║{C.R}")
+    print(f"  {C.B}║{C.R}  Klaim terakhir     {str(state.get('last_claim', 0)) + ' ITLG':>28}  {C.B}║{C.R}")
     if rates["has_history"]:
-        print(f"  {C.B}║{C.R}  Per claim      {str(rates['actual_per_claim']) + ' ITLG':>28}  {C.B}║{C.R}")
-        print(f"  {C.B}║{C.R}  Per day        {str(rates['actual_per_day']) + ' ITLG':>28}  {C.B}║{C.R}")
+        print(f"  {C.B}║{C.R}  Per klaim  {str(rates['actual_per_claim']) + ' ITLG':>28}  {C.B}║{C.R}")
+        print(f"  {C.B}║{C.R}  Per hari           {str(rates['actual_per_day']) + ' ITLG':>28}  {C.B}║{C.R}")
     else:
-        print(f"  {C.B}║{C.R}  Per claim      {'menunggu klaim pertama':>28}  {C.B}║{C.R}")
-        print(f"  {C.B}║{C.R}  Per day        {'menunggu klaim pertama':>28}  {C.B}║{C.R}")
+        print(f"  {C.B}║{C.R}  Per klaim  {'menunggu klaim pertama':>28}  {C.B}║{C.R}")
+        print(f"  {C.B}║{C.R}  Per hari           {'menunggu klaim pertama':>28}  {C.B}║{C.R}")
     if has_group:
-        print(f"  {C.B}║{C.R}  Group          {str(rates['group']) + '/day':>28}  {C.B}║{C.R}")
+        print(f"  {C.B}║{C.R}  Group rate         {str(rates['group']) + '/day':>28}  {C.B}║{C.R}")
     else:
-        print(f"  {C.B}║{C.R}  Group          {'pending aktivasi':>28}  {C.B}║{C.R}")
-    print(f"  {C.B}║{C.R}  Referral       {str(round(rates['ref_dir'] + rates['ref_ind'], 2)) + f' ({total_ref} refs)':>28}  {C.B}║{C.R}")
-    print(f"  {C.B}║{C.R}  Streak/Burned  {f'{streak} / {burned}':>28}  {C.B}║{C.R}")
+        print(f"  {C.B}║{C.R}  Group rate         {'pending aktivasi':>28}  {C.B}║{C.R}")
+    print(f"  {C.B}║{C.R}  Referral           {str(round(rates['ref_dir'] + rates['ref_ind'], 2)) + f' ({total_ref} refs)':>28}  {C.B}║{C.R}")
+    print(f"  {C.B}║{C.R}  Streak / Burn  {f'{streak} / {burned}':>28}  {C.B}║{C.R}")
     if recoverable and recoverable > 0:
-        print(f"  {C.B}║{C.R}  Recoverable    {str(recoverable) + ' ITLG':>28}  {C.B}║{C.R}")
+        print(f"  {C.B}║{C.R}  Bisa dipulihkan    {str(recoverable) + ' ITLG':>28}  {C.B}║{C.R}")
     print(f"  {C.B}╚{'═'*W}╝{C.R}")
     return ic, ti
 
@@ -730,7 +732,7 @@ def format_countdown(seconds):
 
 # ─── Telegram notification ────────────────────────────────────────────────────
 def send_telegram_notif(cfg, info):
-    """Send a Telegram message after successful claim."""
+    """Kirim notifikasi Telegram. Full Indonesia + bedakan tipe klaim."""
     bot_token = cfg.get("tgBotToken")
     chat_id = cfg.get("tgChatId")
     if not bot_token or not chat_id:
@@ -743,30 +745,23 @@ def send_telegram_notif(cfg, info):
     per_day = info.get("rate_per_day")
     group_rate = info.get("group_rate", 0)
     crash = info.get("crash", False)
+    claim_type = info.get("claim_type", "mine")
     now = fmt_wib("%H:%M:%S WIB")
 
-    # Crash notification (BUG F fix)
+    claimed_str = str(claimed) if claimed is not None else "?"
+    before_str = str(before) if before is not None else "?"
+    after_str = str(after) if after is not None else "?"
+
     if crash:
-        text = (
-            f"❌ Bot Crash!\n\n"
-            f"Bot mengalami error dan akan restart otomatis.\n"
-            f"🕐 {now}\n\n"
-            f"Cek log: python bot.py --status"
-        )
+        text = f"❌ Bot Crash!\n\nBot mengalami error dan akan restart otomatis.\n🕐 {now}\n\nCek log: python bot.py --status"
+    elif claim_type == "recovery":
+        text = f"✅ Pemulihan Berhasil\n\n💰 Dapat: +{claimed_str} ITLG (dari burn recovery)\n📊 Saldo: {before_str} → {after_str} ITLG\n🕐 {now}\n\nKlaim mining berikutnya dalam 4 jam."
+    elif claim_type == "group":
+        text = f"✅ Group Mining Berhasil\n\n💰 Dapat: +{claimed_str} ITLG\n📊 Saldo: {before_str} → {after_str} ITLG\n👥 Group: {group_rate}/hari\n🕐 {now}\n\nGroup berikutnya dalam 24 jam."
     else:
-        claimed_str = str(claimed) if claimed is not None else "?"  # BUG J fix
-        before_str = str(before) if before is not None else "?"
-        after_str = str(after) if after is not None else "?"
         day_line = f"\n📈 Per hari: ~{per_day} ITLG (6 klaim)" if per_day else ""
         group_line = f"\n👥 Group: {group_rate}/hari (aktif!)" if group_rate > 0 else "\n👥 Group: pending aktivasi"
-        text = (
-            f"✅ ITLG Claim Berhasil\n\n"
-            f"💰 Dapat: +{claimed_str} ITLG\n"
-            f"📊 Saldo: {before_str} → {after_str} ITLG\n"
-            f"⏱️ Per klaim: {per_claim} ITLG{day_line}{group_line}\n"
-            f"🕐 {now}\n\n"
-            f"Klaim berikutnya dalam 4 jam."
-        )
+        text = f"✅ Klaim Berhasil\n\n💰 Dapat: +{claimed_str} ITLG\n📊 Saldo: {before_str} → {after_str} ITLG\n⏱️ Per klaim: {per_claim} ITLG{day_line}{group_line}\n🕐 {now}\n\nKlaim berikutnya dalam 4 jam."
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload = {"chat_id": chat_id, "text": text}
@@ -844,6 +839,7 @@ def attempt_claim(cfg, token):
                 "rate_per_claim": rates["actual_per_claim"] if rates["has_history"] else claimed,
                 "rate_per_day": rates["actual_per_day"] if rates["has_history"] else None,
                 "group_rate": group_rate,
+                "claim_type": "mine",
             })
         except Exception as e:
             log("warn", f"Notif Telegram gagal: {e}")
@@ -1129,7 +1125,7 @@ def show_status():
             if data:
                 ti = data.get("token", {})
                 bal = ti.get("interlinkGoldTokenAmount", bal)
-                rec = f"{ti.get('itlgRecoverable', 0)} ITLG"
+                rec = f"{ti.get('itlgBisa dipulihkan', 0)} ITLG"
         except Exception:
             pass
     else:
@@ -1171,8 +1167,8 @@ def main():
     args = parser.parse_args()
 
     print(f"\n  {C.CY}{C.B}╔════════════════════════════════════╗{C.R}")
-    print(f"  {C.CY}{C.B}║   Interlink Labs Auto Claim Bot     ║{C.R}")
-    print(f"  {C.CY}{C.B}║   Login once · Claim every 4h       ║{C.R}")
+    print(f"  {C.CY}{C.B}║   Bot Auto Claim Interlink Labs     ║{C.R}")
+    print(f"  {C.CY}{C.B}║   Login sekali · Klaim tiap 4 jam       ║{C.R}")
     print(f"  {C.CY}{C.B}╚════════════════════════════════════╝{C.R}")
     print(f"  {C.DIM}  ☕ Support: https://saweria.co/febfrmn{C.R}\n")
 
