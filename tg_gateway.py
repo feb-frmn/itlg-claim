@@ -125,8 +125,8 @@ def cmd_help(cid, token):
         "/balance      Quick balance\n"
         "/claim        Force mine claim\n"
         "/groupclaim   Force group claim\n"
-        "/stop         Stop daemon\n"
-        "/restart      Restart daemon\n"
+        "/stop         Stop bot\n"
+        "/restart      Restart bot\n"
         "/help         This message",
         token)
 
@@ -217,9 +217,9 @@ def cmd_status(cid, token):
     can_recover, total_recover = itlg.check_recovery(tk, device_id)
     recovery_status = f"{total_recover} ITLG" if can_recover else "Nothing to recover"
 
-    # ── Daemon status ──
+    # ── Bot status ──
     pid = bot_pid()
-    daemon = f"✅ Running (PID {pid})" if pid else "❌ Stopped"
+    bot_status = f"✅ Running (PID {pid})" if pid else "❌ Stopped"
 
     send(cid,
         f"📊 <b>ITLG Dashboard</b>\n"
@@ -238,7 +238,7 @@ def cmd_status(cid, token):
         f"👥 Group        {group_str}\n"
         f"⏳ Group next   {group_next_str}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🤖 Daemon       {daemon}\n"
+        f"🤖 Bot          {bot_status}\n"
         f"🕐 {fmt_wib()} WIB",
         token)
 
@@ -374,14 +374,14 @@ def cmd_claim(cid, token):
 def cmd_stop(cid, token):
     pid = bot_pid()
     if not pid:
-        send(cid, "ℹ️ Daemon not running.", token)
+        send(cid, "ℹ️ Bot not running.", token)
         return
     # Use bot.py's STOP_FILE (.stop), NOT .bot.stop
     with open(itlg.STOP_FILE, "w") as f:
         f.write(str(int(time.time())))
     try:
         os.kill(pid, signal.SIGTERM)
-        send(cid, f"🛑 Stopping daemon (PID {pid})...", token)
+        send(cid, f"🛑 Stopping bot (PID {pid})...", token)
     except (ProcessLookupError, PermissionError) as e:
         send(cid, f"⚠️ Signal failed: {e}\nStopfile created, bot will exit within 10s.", token)
     # Clean up after delay
@@ -426,14 +426,14 @@ def cmd_restart(cid, token):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True)
-        send(cid, "🔄 Daemon restarting...", token)
+        send(cid, "🔄 Bot restarting...", token)
         # Verify it started
         time.sleep(3)
         new_pid = bot_pid()
         if new_pid:
-            send(cid, f"✅ Daemon running (PID {new_pid})", token)
+            send(cid, f"✅ Bot running (PID {new_pid})", token)
         else:
-            send(cid, "⚠️ Daemon started but PID not found yet. Check with /status", token)
+            send(cid, "⚠️ Bot started but PID not found yet. Check with /status", token)
     except Exception as e:
         send(cid, f"❌ Failed to start: {e}", token)
 
@@ -489,7 +489,7 @@ def main():
         sys.exit(1)
 
     print(f"👤 Owner: {owner}")
-    print(f"🤖 Daemon: {'Running' if bot_pid() else 'Stopped'}")
+    print(f"🤖 Bot: {'Running' if bot_pid() else 'Stopped'}")
     print(f"Listening...\n")
 
     offset = None
