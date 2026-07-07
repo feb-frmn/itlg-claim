@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-ITLG Telegram Gateway v2.0 — Command interface for ITLG Claim Bot.
+ITLG Telegram Gateway v2.1 — Command interface for ITLG Claim Bot.
 
-Fixed v2.0:
+v2.1 changelog:
+  - /groupclaim command (force group mining claim)
+  - Private bot guard (non-owner DM → rejected)
+  - claim_type field in notifications (mine vs group)
   - Use bot.py's actual API functions (correct endpoints)
   - Use bot.py's STOP_FILE constant (correct stopfile name)
   - Token auto-refresh via ensure_token_valid()
