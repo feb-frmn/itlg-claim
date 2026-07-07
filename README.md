@@ -38,13 +38,13 @@ python setup.py
 ## Commands
 
 ```
-python bot.py               # Start (auto-restart on crash)
-python bot.py --status      # Live status (API call, accurate timer)
-python bot.py --stop        # Stop bot
-python bot.py --restart     # Stop + start fresh
-python bot.py --once        # Single run
-python bot.py --login       # Force re-login OTP (email)
-python bot.py --login-face  # Login with face photo (selfie)
+python bot_v2_2.py               # Start (auto-restart on crash)
+python bot_v2_2.py --status      # Live status (API call, accurate timer)
+python bot_v2_2.py --stop        # Stop bot
+python bot_v2_2.py --restart     # Stop + start fresh
+python bot_v2_2.py --once        # Single run
+python bot_v2_2.py --login       # Force re-login OTP (email)
+python bot_v2_2.py --login-face  # Login with face photo (selfie)
 ```
 
 ## Login Methods
@@ -52,13 +52,13 @@ python bot.py --login-face  # Login with face photo (selfie)
 ### Method 1: OTP (email)
 ```bash
 python setup.py          # enter loginId, passcode, email, imapPassword
-python bot.py --login    # send OTP to email, enter code
+python bot_v2_2.py --login    # send OTP to email, enter code
 ```
 
 ### Method 2: Selfie / Face Photo
 ```bash
 python setup.py          # enter loginId, passcode + selfie photo path
-python bot.py --login-face  # upload photo → face verify → login
+python bot_v2_2.py --login-face  # upload photo → face verify → login
 ```
 Face photo: clear selfie, good lighting, full face visible. Format: JPG/PNG.
 
