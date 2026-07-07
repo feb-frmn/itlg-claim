@@ -3,10 +3,10 @@
 Interlink Labs Auto Claim — single account, login once, claim forever.
 
 Usage:
-  python bot.py              # loop mode (live countdown, auto-claim every 4h)
-  python bot.py --once        # single run, check + claim if available, exit
-  python bot.py --login       # force re-login (trigger OTP)
-  python bot.py --login-face --photo selfie.jpg  # face login with photo file
+  python bot_v2_2.py              # loop mode (live countdown, auto-claim every 4h)
+  python bot_v2_2.py --once        # single run, check + claim if available, exit
+  python bot_v2_2.py --login       # force re-login (trigger OTP)
+  python bot_v2_2.py --login-face --photo selfie.jpg  # face login with photo file
 
 The bot auto-claims every 4h and sends a Telegram notification on success
 (if tgBotToken + tgChatId are set in config.json).
@@ -38,6 +38,7 @@ APP_VER    = "5.0.5"
 CLAIM_INTERVAL = 4 * 60 * 60
 OTP_TIMEOUT    = 180  # 3 minutes — Interlink can be slow to send OTP
 OTP_POLL_DELAY = 5
+LOG_FILE     = os.path.join(SCRIPT_DIR, "interlink.log")
 
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.json")
 TOKEN_FILE  = os.path.join(SCRIPT_DIR, "token.json")
@@ -59,20 +60,26 @@ def log(ok, msg):
     elif ok == "info": line = f"{C.DIM}{line}{C.R}"
     elif ok == "step": line = f"{C.CY}{line}{C.R}"
     print(line)
+    # ─── File logging (BUG M fix) ───
+    try:
+        ts = now_wib().strftime("%Y-%m-%d %H:%M:%S")
+        with open(LOG_FILE, "a") as f:
+            f.write(f"[{ts}] {line}\n")
+    except Exception:
+        pass
 
 # ─── Config loader ─────────────────────────────────────────────────────────────
 def load_config():
     if not os.path.exists(CONFIG_FILE):
-        log("err", "config.json not found. Run: python setup.py")
+        log("err", "config.json tidak ditemukan. Jalankan: python setup.py")
         sys.exit(1)
     with open(CONFIG_FILE) as f:
         cfg = json.load(f)
     if not cfg.get("deviceId"):
         import secrets
-        cfg["deviceId"] = secrets.token_hex(8)  # random Android ANDROID_ID format
+        cfg["deviceId"] = secrets.token_hex(8)
         with open(CONFIG_FILE, "w") as f:
             json.dump(cfg, f, indent=2)
-    # Pick a random device fingerprint if not already set (sticks for this account)
     if not cfg.get("deviceModel"):
         devices = [
             ("Redmi Note 8 Pro", "XiaoMi"), ("Redmi Note 11", "XiaoMi"),
@@ -91,16 +98,10 @@ def load_config():
 # ─── Token store ────────────────────────────────────────────────────────────────
 def save_tokens(access, refresh):
     data = {"access": access, "refresh": refresh or "", "saved_at": int(time.time())}
-    # Backup OLD token before overwriting (so backup = previous, not current)
-    if os.path.exists(TOKEN_FILE):
-        try:
-            import shutil
-            shutil.copy2(TOKEN_FILE, os.path.join(SCRIPT_DIR, "token-backup.json"))
-        except Exception:
-            pass
-    with open(TOKEN_FILE, "w") as f:
-        json.dump(data, f)
-    os.chmod(TOKEN_FILE, 0o600)
+    for path in (TOKEN_FILE, os.path.join(SCRIPT_DIR, "token-backup.json")):
+        with open(path, "w") as f:
+            json.dump(data, f)
+        os.chmod(path, 0o600)
 
 def load_tokens():
     try:
@@ -139,7 +140,7 @@ def get_actual_rate(state):
     if not history:
         return 0, 0
     avg = sum(history) / len(history)
-    return round(avg, 1), round(avg * 6, 1)  # 6 cycles per day (4h each)
+    return round(avg, 1), round(avg * 6, 1)
 
 # ─── JWT helpers ────────────────────────────────────────────────────────────────
 def jwt_exp(token):
@@ -229,7 +230,6 @@ def grab_otp(cfg, email_addr, after_ts):
     time.sleep(5)
     deadline = time.time() + OTP_TIMEOUT
     while time.time() < deadline:
-        mail = None
         try:
             mail = imaplib.IMAP4_SSL("imap.gmail.com")
             mail.login(email_addr, cfg["imapPassword"])
@@ -241,13 +241,11 @@ def grab_otp(cfg, email_addr, after_ts):
                     if not isinstance(part, tuple):
                         continue
                     msg = email.message_from_bytes(part[1])
-                    # Reject old emails
                     try:
                         if parsedate_to_datetime(msg.get("Date", "")).timestamp() < after_ts - 30:
                             continue
                     except Exception:
                         pass
-                    # Must be "Login Verification" (not "Email Change")
                     subj = str(msg.get("Subject", ""))
                     if "login" not in subj.lower() and "verification code" not in subj.lower():
                         continue
@@ -266,13 +264,11 @@ def grab_otp(cfg, email_addr, after_ts):
                         except: pass
                     matches = re.findall(r"\b(\d{6})\b", body or "")
                     if matches:
+                        mail.logout()
                         return matches[0]
+            mail.logout()
         except Exception as e:
             log("warn", f"IMAP error: {e}")
-        finally:
-            if mail:
-                try: mail.logout()
-                except: pass
         time.sleep(OTP_POLL_DELAY)
     return None
 
@@ -288,43 +284,43 @@ def verify_otp(cfg, otp):
 
 def do_login(cfg):
     """Full OTP login. Returns (access, refresh) or (None, None)."""
-    log("step", "Checking login ID...")
+    log("step", "Cek login ID...")
     if not check_login_id(cfg):
-        log("err", f"Login ID {cfg['loginId']} not found.")
+        log("err", f"Login ID {cfg['loginId']} tidak ditemukan.")
         return None, None
 
-    log("step", "Checking passcode...")
+    log("step", "Cek passcode...")
     found_email = check_passcode(cfg)
     if not found_email and not cfg.get("email"):
-        log("err", "Passcode wrong and no email in config.")
+        log("err", "Passcode salah dan tidak ada email di config.")
         return None, None
     email_addr = found_email or cfg["email"]
-    log("ok", f"Account email: {email_addr}")
+    log("ok", f"Email akun: {email_addr}")
 
     if not cfg.get("imapPassword"):
-        log("err", "imapPassword not set in config.json")
+        log("err", "imapPassword belum diisi di config.json")
         return None, None
 
     for attempt in range(3):
         send_ts = time.time()
-        log("step", f"Sending OTP (attempt {attempt+1}/3)...")
+        log("step", f"Kirim OTP percobaan {attempt+1}/3...")
         if not send_otp(cfg, email_addr):
             time.sleep(5)
             continue
-        log("info", "Waiting for OTP email...")
+        log("info", "Menunggu email OTP...")
         otp = grab_otp(cfg, email_addr, send_ts)
         if not otp:
             continue
-        log("step", f"Verifying OTP {otp}...")
+        log("step", f"Verifikasi OTP {otp}...")
         access, refresh = verify_otp(cfg, otp)
         if access:
-            log("ok", "Login successful!")
+            log("ok", "Login berhasil!")
             save_tokens(access, refresh)
-            log("info", "Token saved to token.json + token-backup.json")
+            log("info", "Token disimpan ke token.json + token-backup.json")
             return access, refresh
-        log("warn", "OTP expired, resending...")
+        log("warn", "OTP kadaluarsa, kirim ulang...")
 
-    log("err", "Login failed after 3 attempts.")
+    log("err", "Login gagal setelah 3 percobaan.")
     return None, None
 
 # ─── Face Login (selfie photo, alternative to OTP) ───────────────────────────
@@ -357,10 +353,8 @@ def login_with_face(cfg, image_key):
     return safe_json(r)
 
 def do_face_login(cfg, photo_override=None):
-    """Full face login flow: verify passcode → get presigned URL → upload photo → login.
-    Args:
-        cfg: config dict
-        photo_override: if set, use this photo path instead of cfg['facePhoto']
+    """
+    Full face login flow: verify passcode → get presigned URL → upload photo → login.
     Returns (access_token, refresh_token) or (None, None).
     """
     lid = cfg.get("loginId", "")
@@ -368,69 +362,53 @@ def do_face_login(cfg, photo_override=None):
     photo_path = photo_override or cfg.get("facePhoto", "")
 
     if not all([lid, pwd]):
-        log("err", "Missing loginId or passcode in config.")
+        log("err", "loginId atau passcode belum diisi di config.")
         return None, None
 
     if not photo_path or not os.path.exists(photo_path):
-        log("err", f"Face photo not found: {photo_path}")
-        log("info", "Run: python setup.py (set facePhoto path)")
+        log("err", f"Foto wajah tidak ditemukan: {photo_path}")
+        log("info", "Jalankan: python setup.py (isi facePhoto path)")
         return None, None
 
-    # Step 1: Verify passcode
-    log("step", "Verifying passcode...")
+    log("step", "Verifikasi passcode...")
     check = check_passcode(cfg)
     if not check:
-        log("err", "Invalid passcode.")
+        log("err", "Passcode salah.")
         return None, None
-    log("ok", f"User verified: {check}")
+    log("ok", f"User terverifikasi: {check}")
 
-    # Step 2: Read face photo
     try:
         with open(photo_path, "rb") as f:
             face_data = f.read()
-        log("step", f"Loaded face photo: {photo_path} ({len(face_data)} bytes)")
+        log("step", f"Foto dimuat: {photo_path} ({len(face_data)} bytes)")
     except Exception as e:
-        log("err", f"Cannot read photo: {e}")
+        log("err", f"Gagal baca foto: {e}")
         return None, None
 
-    # Step 3: Get presigned URL
-    log("step", "Getting presigned upload URL...")
+    log("step", "Mendapatkan URL upload...")
     presign = get_presigned_login(cfg)
     if presign.get("statusCode") != 200:
-        log("err", f"Presign failed: {presign.get('message', '')}")
+        log("err", f"Gagal dapat presigned URL: {presign.get('message', '')}")
         return None, None
 
     try:
         image_data = presign["data"]["image"]
         image_key = image_data["key"]
         upload_url = image_data["uploadUrl"]
-        log("ok", f"Got presigned URL (key: {image_key[:30]}...)")
+        log("ok", f"Dapat URL upload (key: {image_key[:30]}...)")
     except (KeyError, TypeError) as e:
-        log("err", f"Unexpected presign response: {e}")
+        log("err", f"Respon presign tidak sesuai: {e}")
         return None, None
 
-    # Step 4: Upload face photo
-    log("step", "Uploading face photo...")
+    log("step", "Upload foto wajah...")
     if not upload_face(upload_url, face_data):
-        log("err", "Face photo upload failed.")
+        log("err", "Upload foto wajah gagal.")
         return None, None
-    log("ok", "Face photo uploaded.")
+    log("ok", "Foto wajah terupload.")
 
-    # Step 5: Login with face
-    log("step", "Verifying face + logging in...")
+    log("step", "Verifikasi wajah + login...")
     result = login_with_face(cfg, image_key)
 
-    # Check statusCode first
-    status = result.get("statusCode")
-    if status and status not in (200, 201):
-        msg = result.get("message", "")
-        if "E304" in str(msg):
-            log("err", "FACE MISMATCH! Selfie doesn't match registration photo.")
-        else:
-            log("err", f"Face login failed (HTTP {status}): {msg}")
-        return None, None
-
-    # Extract tokens from response
     data = result.get("data", {})
     token = None
     refresh_tok = None
@@ -449,24 +427,23 @@ def do_face_login(cfg, photo_override=None):
                 refresh_tok = result[k]
 
     if token:
-        log("ok", "Face login successful!")
+        log("ok", "Face login berhasil!")
         save_tokens(token, refresh_tok)
-        log("info", f"Token saved. Refresh: {'YES' if refresh_tok else 'NO'}")
+        log("info", f"Token disimpan. Refresh token: {'ADA' if refresh_tok else 'TIDAK ADA'}")
         return token, refresh_tok
 
-    # Check for specific errors
     msg = result.get("message", "")
     if "E304" in str(msg):
-        log("err", "FACE MISMATCH! Selfie doesn't match registration photo.")
+        log("err", "WAJAH TIDAK COCOK! Selfie berbeda dengan foto registrasi.")
     else:
-        log("err", f"Face login failed: {msg}")
+        log("err", f"Face login gagal: {msg}")
     return None, None
 
 # ─── Refresh ──────────────────────────────────────────────────────────────────
 def do_refresh(cfg, refresh_token):
     if not refresh_token:
         return None
-    log("step", "Refreshing token...")
+    log("step", "Merefresh token...")
     try:
         r = api_post("/auth/token", {"refreshToken": refresh_token}, device_id=cfg["deviceId"])
         d = safe_json(r)
@@ -475,11 +452,11 @@ def do_refresh(cfg, refresh_token):
             new_access = data.get("accessToken") or data.get("jwtToken")
             new_refresh = data.get("refreshToken")
             if new_access:
-                log("ok", "Token refreshed.")
+                log("ok", "Token berhasil direfresh.")
                 save_tokens(new_access, new_refresh or refresh_token)
                 return new_access
     except Exception as e:
-        log("warn", f"Refresh error: {e}")
+        log("warn", f"Gagal refresh: {e}")
     return None
 
 # ─── Get session (login once, never logout) ────────────────────────────────────
@@ -493,71 +470,18 @@ def get_session(cfg, allow_login=True):
         if new_access:
             return new_access
     if not allow_login:
-        log("warn", "No valid token. Run: python bot.py --login or --login-face")
+        log("warn", "Tidak ada token valid. Jalankan: python bot_v2_2.py --login atau --login-face")
         return None
-    # Try face login first (if facePhoto configured)
     if cfg.get("facePhoto") and os.path.exists(cfg["facePhoto"]):
-        log("warn", "No valid token. Trying face login...")
+        log("warn", "Token tidak valid. Mencoba face login...")
         access, refresh = do_face_login(cfg)
         if access:
             return access
-        log("warn", "Face login failed. Trying OTP...")
+        log("warn", "Face login gagal. Mencoba OTP...")
     else:
-        log("warn", "No valid token. Triggering OTP login...")
+        log("warn", "Token tidak valid. Memicu login OTP...")
     access, refresh = do_login(cfg)
     return access
-
-def ensure_token_valid(cfg, token, buffer=300):
-    """Check token validity, refresh if near expiry, auto-relogin if needed.
-    Args:
-        cfg: config dict
-        token: current access token
-        buffer: seconds before expiry to trigger refresh (default 5 min)
-    Returns: valid token or None
-    """
-    if not token:
-        return get_session(cfg)
-
-    remaining = (jwt_exp(token) or 0) - time.time()
-
-    # Token still valid for > buffer seconds
-    if remaining > buffer:
-        return token
-
-    # Token expiring soon or expired → try refresh
-    access, refresh = load_tokens()
-    if refresh:
-        log("warn", f"Token expiring in {max(0,int(remaining/60))}min, refreshing...")
-        new_access = do_refresh(cfg, refresh)
-        if new_access:
-            return new_access
-        log("warn", "Refresh failed.")
-
-    # Refresh failed → auto relogin via face
-    if cfg.get("facePhoto") and os.path.exists(cfg["facePhoto"]):
-        log("warn", "Auto relogin via face...")
-        access, refresh = do_face_login(cfg)
-        if access:
-            log("ok", "Auto relogin successful!")
-            return access
-        log("err", "Face relogin failed!")
-
-    # Face failed → send Telegram alert
-    try:
-        tg_token = cfg.get("tgBotToken", "")
-        tg_chat = cfg.get("tgChatId", "")
-        if tg_token and tg_chat:
-            import urllib.request
-            msg = "\u26a0\ufe0f <b>ITLG Bot</b>\nToken expired & auto-relogin failed!\nPlease login manually: <code>python bot.py --login-face</code>"
-            url = f"https://api.telegram.org/bot{tg_token}/sendMessage"
-            data = json.dumps({"chat_id": tg_chat, "text": msg, "parse_mode": "HTML"}).encode()
-            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-            urllib.request.urlopen(req, timeout=10)
-    except Exception:
-        pass
-
-    log("err", "Auto relogin failed! Need manual intervention.")
-    return None
 
 # ─── API helpers ──────────────────────────────────────────────────────────────
 def get_user_info(token, device_id):
@@ -578,7 +502,8 @@ def trigger_ads(token, device_id, last_claim):
         r = api_get(f"/token/get-random-ads-mining-new?totalHhp=1&lastTimeClaim={last_claim}", token, device_id)
         d = safe_json(r)
         if d.get("statusCode") == 200:
-            return d.get("data", {}).get("timeRetry", 10) or 10
+            retry = d.get("data", {}).get("timeRetry")
+            return retry if retry is not None else 10
     except Exception:
         pass
     return 10
@@ -613,10 +538,10 @@ def attempt_recovery(cfg, token):
     if not can_recover or total <= 0:
         return token, 0
 
-    log("ok", f"Recovery available! {total} ITLG recoverable. Fetching burn transactions...")
+    log("ok", f"Saldo recoverable tersedia! {total} ITLG bisa dipulihkan...")
     burns = get_recoverable_burns(token, device_id)
     if not burns:
-        log("info", "Recovery: canRecover=true but no recoverable burns found. Trying next cycle.")
+        log("info", "Recovery: canRecover=true tapi tidak ada burn yang bisa dipulihkan.")
         return token, 0
 
     balance_before = get_balance(token, device_id)
@@ -625,7 +550,7 @@ def attempt_recovery(cfg, token):
         tid = burn.get("transactionId")
         if not tid:
             continue
-        log("step", f"Recovering burn: {tid} ({burn.get('amount', 0)} ITLG)...")
+        log("step", f"Memulihkan burn: {tid} ({burn.get('amount', 0)} ITLG)...")
         r = api_post("/recovery/claim", {"transactionId": tid}, token=token, device_id=device_id)
         result = safe_json(r)
         status = result.get("statusCode")
@@ -633,17 +558,17 @@ def attempt_recovery(cfg, token):
         if status == 200 or status == 201:
             amt = burn.get("amount", 0)
             recovered_total += amt
-            log("ok", f"Recovered! +{amt} ITLG from {tid}")
+            log("ok", f"Pulih! +{amt} ITLG dari {tid}")
             time.sleep(2)
         else:
-            log("warn", f"Recovery failed for {tid}: {msg}")
+            log("warn", f"Gagal pulihkan {tid}: {msg}")
 
     if recovered_total > 0:
         time.sleep(2)
         balance_after = get_balance(token, device_id)
-        log("ok", f"Recovery complete! +{recovered_total} ITLG recovered")
+        log("ok", f"Pemulihan selesai! +{recovered_total} ITLG kembali")
         if balance_before is not None and balance_after is not None:
-            log("info", f"Balance: {balance_before} → {balance_after} ITLG")
+            log("info", f"Saldo: {balance_before} → {balance_after} ITLG")
         try:
             send_telegram_notif(cfg, {
                 "claimed": recovered_total,
@@ -676,15 +601,13 @@ def attempt_group_claim(cfg, token):
     device_id = cfg["deviceId"]
     data = get_group_mining_list(token, device_id)
     if not data:
-        log("err", "Failed to fetch group mining list.")
+        log("err", "Gagal mengambil data group mining.")
         return token, False, None
 
     groups = data.get("groups", [])
-    is_claimable = data.get("isClaimable", False)
     next_time = data.get("nextTimeClaim")
     already_claimed = data.get("requesterHasClaimedToday", False)
 
-    # Find a claimable group
     claimable_group = None
     total_reward = 0
     for g in groups:
@@ -695,17 +618,16 @@ def attempt_group_claim(cfg, token):
 
     if not claimable_group:
         if already_claimed:
-            log("info", f"Group mining: already claimed today. {len(groups)} groups, total reward pool: {total_reward} ITLG")
+            log("info", f"Group mining: sudah diklaim hari ini. {len(groups)} grup, pool: {total_reward} ITLG")
         else:
-            log("info", f"Group mining: not ready yet. {len(groups)} groups, total reward pool: {total_reward} ITLG")
+            log("info", f"Group mining: belum waktunya. {len(groups)} grup, pool: {total_reward} ITLG")
         return token, False, next_time
 
     gid = claimable_group["groupId"]
-    log("ok", f"Group mining claimable! Group: {gid} ({len(groups)} groups, pool: {total_reward} ITLG)")
+    log("ok", f"Group mining bisa diklaim! Grup: {gid} ({len(groups)} grup, pool: {total_reward} ITLG)")
 
-    # Human-like delay
     jitter = random.randint(30, 120)
-    log("info", f"Waiting {jitter}s before group claim (human-like)...")
+    log("info", f"Tunggu {jitter}s (seperti manusia)...")
     time.sleep(jitter)
 
     balance_before = get_balance(token, device_id)
@@ -717,29 +639,28 @@ def attempt_group_claim(cfg, token):
         time.sleep(2)
         balance_after = get_balance(token, device_id)
         claimed = (balance_after - balance_before) if balance_before is not None and balance_after is not None else None
-        log("ok", f"Group mining claimed! +{claimed if claimed is not None else '?'} ITLG")
+        claimed_str = str(claimed) if claimed is not None else "?"
+        log("ok", f"Group mining diklaim! +{claimed_str} ITLG")
         if balance_before is not None and balance_after is not None:
-            log("info", f"Balance: {balance_before} → {balance_after} ITLG")
-        # Telegram notification
+            log("info", f"Saldo: {balance_before} → {balance_after} ITLG")
         try:
             send_telegram_notif(cfg, {
                 "claimed": claimed,
                 "before": balance_before,
                 "after": balance_after,
-                "rate_per_claim": total_reward,
+                "rate_per_claim": claimed or 0,
                 "rate_per_day": None,
                 "group_rate": total_reward,
-                "claim_type": "group",
             })
         except Exception as e:
-            log("warn", f"Telegram notif failed: {e}")
+            log("warn", f"Notif Telegram gagal: {e}")
         return token, True, next_time
 
     if status == 400 and "ALREADY_CLAIMED" in str(msg).upper():
-        log("info", "Group mining: already claimed today.")
+        log("info", "Group mining: sudah diklaim hari ini.")
         return token, False, next_time
 
-    log("err", f"Group mining claim failed ({status}): {msg}")
+    log("err", f"Group mining gagal ({status}): {msg}")
     return token, False, next_time
 
 # ─── Rates ────────────────────────────────────────────────────────────────────
@@ -764,7 +685,7 @@ def get_rates(ti, state=None):
 def show_dashboard(token, device_id):
     data = get_user_info(token, device_id)
     if not data:
-        log("err", "Failed to fetch user info.")
+        log("err", "Gagal ambil data user.")
         return None, None
     ui = data.get("userInfo", {})
     ti = data.get("token", {})
@@ -788,12 +709,12 @@ def show_dashboard(token, device_id):
         print(f"  {C.B}║{C.R}  Per claim      {str(rates['actual_per_claim']) + ' ITLG':>28}  {C.B}║{C.R}")
         print(f"  {C.B}║{C.R}  Per day        {str(rates['actual_per_day']) + ' ITLG':>28}  {C.B}║{C.R}")
     else:
-        print(f"  {C.B}║{C.R}  Per claim      {'waiting first claim':>28}  {C.B}║{C.R}")
-        print(f"  {C.B}║{C.R}  Per day        {'waiting first claim':>28}  {C.B}║{C.R}")
+        print(f"  {C.B}║{C.R}  Per claim      {'menunggu klaim pertama':>28}  {C.B}║{C.R}")
+        print(f"  {C.B}║{C.R}  Per day        {'menunggu klaim pertama':>28}  {C.B}║{C.R}")
     if has_group:
         print(f"  {C.B}║{C.R}  Group          {str(rates['group']) + '/day':>28}  {C.B}║{C.R}")
     else:
-        print(f"  {C.B}║{C.R}  Group          {'pending activation':>28}  {C.B}║{C.R}")
+        print(f"  {C.B}║{C.R}  Group          {'pending aktivasi':>28}  {C.B}║{C.R}")
     print(f"  {C.B}║{C.R}  Referral       {str(round(rates['ref_dir'] + rates['ref_ind'], 2)) + f' ({total_ref} refs)':>28}  {C.B}║{C.R}")
     print(f"  {C.B}║{C.R}  Streak/Burned  {f'{streak} / {burned}':>28}  {C.B}║{C.R}")
     if recoverable and recoverable > 0:
@@ -814,56 +735,49 @@ def send_telegram_notif(cfg, info):
     chat_id = cfg.get("tgChatId")
     if not bot_token or not chat_id:
         return
-    import urllib.parse
+
     claimed = info.get("claimed")
     before = info.get("before")
     after = info.get("after")
     per_claim = info.get("rate_per_claim", 0)
     per_day = info.get("rate_per_day")
     group_rate = info.get("group_rate", 0)
-    claim_type = info.get("claim_type", "mine")  # "mine" or "group"
+    crash = info.get("crash", False)
     now = fmt_wib("%H:%M:%S WIB")
 
-    # Check if this is a crash alert (claimed=0, before=0, after=0)
-    if claimed == 0 and before == 0 and after == 0:
+    # Crash notification (BUG F fix)
+    if crash:
         text = (
-            f"⚠️ ITLG Bot Crash\n\n"
-            f"Bot crashed but auto-restarting.\n"
-            f"🕐 {now}\n"
-            f"Run: python bot.py --status"
-        )
-    elif claim_type == "group":
-        type_label = "👥 Group Claim"
-        next_line = "Next group claim in 24h."
-        text = (
-            f"✅ ITLG {type_label} Success\n\n"
-            f"💰 Claimed: +{claimed} ITLG\n"
-            f"📊 Balance: {before} → {after} ITLG\n"
-            f"👥 Group reward: {per_claim} ITLG\n"
+            f"❌ Bot Crash!\n\n"
+            f"Bot mengalami error dan akan restart otomatis.\n"
             f"🕐 {now}\n\n"
-            f"{next_line}"
+            f"Cek log: python bot.py --status"
         )
     else:
-        day_line = f"\n📈 Per day: ~{per_day} ITLG (6 claims)" if per_day else ""
-        group_line = f"\n👥 Group: {group_rate}/day (active!)" if group_rate > 0 else "\n👥 Group: pending activation"
+        claimed_str = str(claimed) if claimed is not None else "?"  # BUG J fix
+        before_str = str(before) if before is not None else "?"
+        after_str = str(after) if after is not None else "?"
+        day_line = f"\n📈 Per hari: ~{per_day} ITLG (6 klaim)" if per_day else ""
+        group_line = f"\n👥 Group: {group_rate}/hari (aktif!)" if group_rate > 0 else "\n👥 Group: pending aktivasi"
         text = (
-            f"✅ ITLG Mine Claim Success\n\n"
-            f"💰 Claimed: +{claimed} ITLG\n"
-            f"📊 Balance: {before} → {after} ITLG\n"
-            f"⏱️ Per claim: {per_claim} ITLG{day_line}{group_line}\n"
+            f"✅ ITLG Claim Berhasil\n\n"
+            f"💰 Dapat: +{claimed_str} ITLG\n"
+            f"📊 Saldo: {before_str} → {after_str} ITLG\n"
+            f"⏱️ Per klaim: {per_claim} ITLG{day_line}{group_line}\n"
             f"🕐 {now}\n\n"
-            f"Next mine claim in 4h."
+            f"Klaim berikutnya dalam 4 jam."
         )
+
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload = {"chat_id": chat_id, "text": text}
     try:
         r = requests.post(url, json=payload, timeout=10, verify=False)
         if r.status_code == 200:
-            log("ok", "Telegram notification sent.")
+            log("ok", "Notif Telegram terkirim.")
         else:
             log("warn", f"Telegram error: {r.status_code}")
     except Exception as e:
-        log("warn", f"Telegram notif error: {e}")
+        log("warn", f"Notif Telegram error: {e}")
 
 # ─── Claim ─────────────────────────────────────────────────────────────────────
 def attempt_claim(cfg, token):
@@ -873,15 +787,25 @@ def attempt_claim(cfg, token):
         nf = ic.get("nextFrame")
         if nf:
             remain = int((nf - time.time() * 1000) / 1000)
-            log("info", f"Not claimable. Next in {format_countdown(max(0, remain))}")
+            log("info", f"Belum bisa klaim. Berikutnya {format_countdown(max(0, remain))}")
         return token, False
 
-    # Human-like delay: wait 30-120s before claiming (humans don't claim at 00:00:00)
+    # Human-like delay: wait 30-120s before claiming
     jitter = random.randint(30, 120)
-    log("info", f"Claimable! Waiting {jitter}s before claiming (human-like)...")
+    log("info", f"Bisa diklaim! Tunggu {jitter}s (seperti manusia)...")
     time.sleep(jitter)
 
-    # Capture balance BEFORE claim
+    # Re-check claimable after delay (BUG 5 fix)
+    ic_after = check_claimable(token, device_id)
+    if not ic_after.get("isClaimable"):
+        nf = ic_after.get("nextFrame")
+        if nf:
+            remain = int((nf - time.time() * 1000) / 1000)
+            log("info", f"Diklaim dari aplikasi saat menunggu. Berikutnya {format_countdown(max(0, remain))}")
+        else:
+            log("info", "Diklaim dari aplikasi saat menunggu. Lewati.")
+        return token, False
+
     balance_before = get_balance(token, device_id)
     user = get_user_info(token, device_id)
     if not user:
@@ -890,11 +814,11 @@ def attempt_claim(cfg, token):
     last_claim = ti.get("lastClaimTime") or int(time.time() * 1000)
     group_rate = ti.get("groupMiningRate", 0) or 0
 
-    log("ok", "Claimable! Triggering ads...")
+    log("ok", "Siap klaim! Memicu ads...")
     wait = trigger_ads(token, device_id, last_claim)
     time.sleep(wait + 5)
 
-    log("step", "Claiming...")
+    log("step", "Mengklaim...")
     result = claim_airdrop(token, device_id)
     status = result.get("statusCode")
     msg = result.get("message", "")
@@ -905,12 +829,13 @@ def attempt_claim(cfg, token):
         claimed = (balance_after - balance_before) if balance_before is not None and balance_after is not None else None
         rates = get_rates(ti, load_claim_state())
         save_claim_state(claimed=claimed, balance=balance_after)
-        log("ok", f"Claimed! +{claimed if claimed is not None else '?'} ITLG")
-        log("info", f"Balance: {balance_before} → {balance_after} ITLG")
+        claimed_str = str(claimed) if claimed is not None else "?"
+        log("ok", f"Klaim berhasil! +{claimed_str} ITLG")
+        log("info", f"Saldo: {balance_before} → {balance_after} ITLG")
         if rates["has_history"]:
-            log("info", f"Avg per claim: {rates['actual_per_claim']} | Per day: {rates['actual_per_day']} ITLG")
+            log("info", f"Rata-rata: {rates['actual_per_claim']} | Per hari: {rates['actual_per_day']} ITLG")
         else:
-            log("info", f"First claim recorded: {claimed} ITLG")
+            log("info", f"Klaim pertama tercatat: {claimed} ITLG")
         try:
             send_telegram_notif(cfg, {
                 "claimed": claimed,
@@ -919,24 +844,23 @@ def attempt_claim(cfg, token):
                 "rate_per_claim": rates["actual_per_claim"] if rates["has_history"] else claimed,
                 "rate_per_day": rates["actual_per_day"] if rates["has_history"] else None,
                 "group_rate": group_rate,
-                "claim_type": "mine",
             })
         except Exception as e:
-            log("warn", f"Telegram notif failed: {e}")
+            log("warn", f"Notif Telegram gagal: {e}")
         show_dashboard(token, device_id)
         return token, True
 
     if status == 400 and "TOO_EARLY" in str(msg).upper():
-        log("info", "Already claimed (maybe manual?). Syncing next timer from API...")
+        log("info", "Sudah diklaim (mungkin manual?). Sinkron timer dari API...")
         ic_new = check_claimable(token, device_id)
         nf = ic_new.get("nextFrame")
         if nf:
             remain = int((nf - time.time() * 1000) / 1000)
-            log("info", f"Next claim in {format_countdown(max(0, remain))}")
+            log("info", f"Klaim berikutnya {format_countdown(max(0, remain))}")
         return token, False
 
     if status == 500:
-        log("err", "Server error. Retrying in 10s...")
+        log("err", "Error server. Coba lagi dalam 10 detik...")
         time.sleep(10)
         result2 = claim_airdrop(token, device_id)
         if result2.get("statusCode") == 200:
@@ -944,7 +868,8 @@ def attempt_claim(cfg, token):
             claimed = (balance_after - balance_before) if balance_before is not None and balance_after is not None else None
             rates = get_rates(ti, load_claim_state())
             save_claim_state(claimed=claimed, balance=balance_after)
-            log("ok", f"Claimed on retry! +{claimed if claimed is not None else '?'} ITLG")
+            claimed_str = str(claimed) if claimed is not None else "?"
+            log("ok", f"Klaim berhasil (percobaan ulang)! +{claimed_str} ITLG")
             try:
                 send_telegram_notif(cfg, {
                     "claimed": claimed,
@@ -953,21 +878,20 @@ def attempt_claim(cfg, token):
                     "rate_per_claim": rates["actual_per_claim"] if rates["has_history"] else claimed,
                     "rate_per_day": rates["actual_per_day"] if rates["has_history"] else None,
                     "group_rate": group_rate,
-                    "claim_type": "mine",
                 })
             except Exception:
                 pass
             show_dashboard(token, device_id)
             return token, True
-        log("err", f"Retry failed: {result2.get('message', '')}")
+        log("err", f"Percobaan ulang gagal: {result2.get('message', '')}")
         return token, False
 
-    log("err", f"Claim failed ({status}): {msg}")
+    log("err", f"Klaim gagal ({status}): {msg}")
     return token, False
 
 # ─── Run modes ──────────────────────────────────────────────────────────────────
 def run_once(cfg):
-    log("info", f"Run: {fmt_wib()}")
+    log("info", f"Eksekusi: {fmt_wib()}")
     token = get_session(cfg, allow_login=False)
     if not token:
         return
@@ -978,130 +902,116 @@ def run_once(cfg):
         nf = ic.get("nextFrame") if ic else None
         if nf:
             remain = int((nf - time.time() * 1000) / 1000)
-            log("info", f"Mining next in {format_countdown(max(0, remain))}")
+            log("info", f"Klaim berikutnya {format_countdown(max(0, remain))}")
 
-    # Group mining check
-    log("info", "Checking group mining...")
+    log("info", "Cek group mining...")
     token, group_claimed, group_next = attempt_group_claim(cfg, token)
     if group_next:
         remain = int((group_next - time.time() * 1000) / 1000)
-        log("info", f"Group mining next in {format_countdown(max(0, remain))}")
+        log("info", f"Group mining berikutnya {format_countdown(max(0, remain))}")
 
-    # Recovery check
-    log("info", "Checking recovery...")
+    log("info", "Cek recovery...")
     token, recovered = attempt_recovery(cfg, token)
     if recovered > 0:
-        log("ok", f"Recovered {recovered} ITLG from burned cycles!")
+        log("ok", f"Berhasil pulihkan {recovered} ITLG!")
     else:
-        log("info", "Recovery: nothing to recover yet.")
+        log("info", "Recovery: belum ada yang bisa dipulihkan.")
 
 def run_loop(cfg):
-    log("info", "Loop mode. Mining 4h + Group mining 24h.")
+    log("info", "Mode loop. Mining 4 jam + Group mining 24 jam.")
     token = get_session(cfg)
     if not token:
-        log("err", "No valid token. Run: python bot.py --login")
-        raise RuntimeError("No valid token — manual login required")
+        log("err", "Token tidak valid. Jalankan: python bot.py --login")
+        return
 
-    # ─── Initial check: claim both if available ───
+    # Initial check
     ic, _ = show_dashboard(token, cfg["deviceId"])
     if ic and ic.get("isClaimable"):
         token, _ = attempt_claim(cfg, token)
 
-    # Group mining initial check
     token, _, group_next = attempt_group_claim(cfg, token)
 
-    # Recovery initial check
     token, recovered = attempt_recovery(cfg, token)
     if recovered > 0:
         show_dashboard(token, cfg["deviceId"])
 
-    # Get timers
     ic = check_claimable(token, cfg["deviceId"])
     mining_next = ic.get("nextFrame") or (time.time() * 1000 + CLAIM_INTERVAL * 1000)
     if not group_next:
         group_next = time.time() * 1000 + GROUP_INTERVAL * 1000
 
-    log("info", f"Mining next: {format_countdown((mining_next - time.time() * 1000) / 1000)}")
-    log("info", f"Group next:  {format_countdown((group_next - time.time() * 1000) / 1000)}")
+    log("info", f"Mining berikutnya: {format_countdown((mining_next - time.time() * 1000) / 1000)}")
+    log("info", f"Group berikutnya: {format_countdown((group_next - time.time() * 1000) / 1000)}")
 
     while True:
-        # Check stopfile
         if os.path.exists(STOP_FILE):
-            log("info", "Stop signal received. Exiting run_loop.")
+            log("info", "Sinyal stop diterima. Keluar dari loop.")
             return
         now_ms = time.time() * 1000
         mining_remain = max(0, (mining_next - now_ms) / 1000)
         group_remain = max(0, (group_next - now_ms) / 1000)
-        next_label = "mining" if mining_remain < group_remain else "group"
-        next_secs = min(mining_remain, group_remain)
 
         if mining_remain > 0 or group_remain > 0:
             print(f"\r  {C.CY}⏰ Mining: {format_countdown(mining_remain)} | Group: {format_countdown(group_remain)}{C.R}     ", end="", flush=True)
 
         if mining_remain <= 0:
             print()
-            log("step", "Mining claim time!")
-            human_delay = random.randint(10, 60)
-            log("info", f"Waiting {human_delay}s (human-like)...")
-            time.sleep(human_delay)
-            token = ensure_token_valid(cfg, token)
+            log("step", "⏳ Waktu mining! Proses klaim...")
+            token = get_session(cfg)
             if not token:
-                log("err", "Token invalid after relogin. Retrying in 60s...")
+                log("warn", "Token habis. Tunggu 60 detik lalu coba lagi...")
                 time.sleep(60)
-                token = ensure_token_valid(cfg, get_session(cfg, allow_login=False) or "")
+                token = get_session(cfg)
             if token:
                 token, claimed = attempt_claim(cfg, token)
                 if claimed:
-                    # Check recovery after successful mining claim
                     token, _ = attempt_recovery(cfg, token)
                     ic = check_claimable(token, cfg["deviceId"])
                     mining_next = ic.get("nextFrame") or (time.time() * 1000 + CLAIM_INTERVAL * 1000)
+                    log("ok", f"Siklus klaim selesai. Mining berikutnya: {format_countdown((mining_next - time.time() * 1000) / 1000)}")
                 else:
-                    # Claim failed — re-fetch timer from API instead of blind 1-min retry
                     ic = check_claimable(token, cfg["deviceId"])
                     nf = ic.get("nextFrame")
                     if nf:
                         mining_next = nf
+                        log("info", f"Belum waktunya. Berikutnya: {format_countdown((nf - time.time() * 1000) / 1000)}")
                     else:
-                        mining_next = time.time() * 1000 + 300 * 1000  # fallback: retry in 5 min
+                        mining_next = time.time() * 1000 + 300 * 1000
+                        log("info", "Tidak bisa dapat timer dari API. Coba lagi 5 menit.")
+            else:
+                log("err", "Gagal dapat token. Coba lagi 5 menit.")
+                mining_next = time.time() * 1000 + 300 * 1000
 
         if group_remain <= 0:
             print()
-            log("step", "Group mining claim time!")
-            human_delay = random.randint(10, 60)
-            log("info", f"Waiting {human_delay}s (human-like)...")
-            time.sleep(human_delay)
-            token = ensure_token_valid(cfg, token)
+            log("step", "⏳ Waktu group mining! Proses klaim...")
+            token = get_session(cfg)
             if token:
                 token, claimed, group_next = attempt_group_claim(cfg, token)
                 if not group_next:
                     group_next = time.time() * 1000 + GROUP_INTERVAL * 1000
             else:
-                group_next = time.time() * 1000 + 300 * 1000  # fallback: retry in 5 min (was 1 min)
+                group_next = time.time() * 1000 + 300 * 1000
 
         time.sleep(10)
 
-
 # ─── Cleanup old log/cache (auto, runs on bot start) ──────────────────────────
 def cleanup_old_files(max_age_days=2):
-    """Delete log entries older than max_age_days. Keeps file small, prevents bloat."""
+    """Delete log entries older than max_age_days."""
     import glob
     now = time.time()
     cutoff = now - (max_age_days * 86400)
-    
-    # 1. Trim interlink.log — keep only last 500 lines
-    log_file = os.path.join(SCRIPT_DIR, "interlink.log")
-    if os.path.exists(log_file):
+
+    if os.path.exists(LOG_FILE):
         try:
-            with open(log_file, "r") as f:
+            with open(LOG_FILE, "r") as f:
                 lines = f.readlines()
             if len(lines) > 500:
-                with open(log_file, "w") as f:
+                with open(LOG_FILE, "w") as f:
                     f.writelines(lines[-500:])
         except Exception:
             pass
-    
-    # 2. Delete old backup files older than max_age_days
+
     for pattern in ["token-backup-*.json", "claim_state-*.json"]:
         for f in glob.glob(os.path.join(SCRIPT_DIR, pattern)):
             try:
@@ -1109,8 +1019,7 @@ def cleanup_old_files(max_age_days=2):
                     os.remove(f)
             except Exception:
                 pass
-    
-    # 3. Clean old __pycache__
+
     pycache = os.path.join(SCRIPT_DIR, "__pycache__")
     if os.path.isdir(pycache):
         for f in glob.glob(os.path.join(pycache, "*")):
@@ -1123,58 +1032,36 @@ def cleanup_old_files(max_age_days=2):
 
 # ─── Stop bot ──────────────────────────────────────────────────────────────────
 STOP_FILE = os.path.join(SCRIPT_DIR, ".stop")
-PID_FILE  = os.path.join(SCRIPT_DIR, ".bot.pid")
 
 def stop_bot():
-    """Stop the running bot gracefully using stopfile + PID file."""
-    # Write stopfile — the running bot checks for this and exits cleanly
+    """Stop the running bot gracefully using stopfile."""
     with open(STOP_FILE, "w") as f:
         f.write(str(int(time.time())))
-    log("info", "Stop signal sent. Bot will exit within 10 seconds.")
-    # Try PID file first (reliable), fall back to pgrep
-    import signal
-    killed = False
-    if os.path.exists(PID_FILE):
-        try:
-            pid = int(open(PID_FILE).read().strip())
-            os.kill(pid, signal.SIGTERM)
-            log("ok", f"Sent SIGTERM to PID {pid}.")
-            killed = True
-        except (ValueError, ProcessLookupError, PermissionError):
-            pass
-    if not killed:
-        import subprocess
-        try:
-            pids = subprocess.getoutput('pgrep -f "python3 bot\\.py"').strip().split("\n")
-            my_pid = str(os.getpid())
-            for p in pids:
-                p = p.strip()
-                if p and p != my_pid:
-                    try:
-                        cmdline = subprocess.getoutput(f'ps -p {p} -o args=').strip()
-                        if 'bot.py' in cmdline and '--status' not in cmdline and '--once' not in cmdline:
-                            os.kill(int(p), signal.SIGTERM)
-                            log("ok", f"Sent SIGTERM to PID {p}.")
-                            killed = True
-                    except (ProcessLookupError, ValueError):
-                        pass
-        except Exception as e:
-            log("warn", f"Could not signal process: {e}")
-    if not killed:
-        log("info", "No running bot process found (but stopfile created).")
-    # Clean up PID file + stopfile
-    time.sleep(2)
-    for f in (PID_FILE, STOP_FILE):
-        if os.path.exists(f):
+    log("info", "Sinyal stop terkirim. Bot akan berhenti dalam 10 detik.")
+    import subprocess, signal
+    try:
+        pids = subprocess.getoutput('pgrep -f "python3 bot_v2_2\\.py"').strip().split("\n")
+        my_pid = str(os.getpid())
+        pids = [p for p in pids if p and p != my_pid and p.strip()]
+        for pid in pids:
             try:
-                os.remove(f)
-            except Exception:
+                os.kill(int(pid), signal.SIGTERM)
+            except (ProcessLookupError, ValueError):
                 pass
+        if pids:
+            log("ok", f"Stop signal terkirim ke {len(pids)} proses.")
+        else:
+            log("info", "Tidak ada proses bot berjalan (tapi stopfile dibuat).")
+    except Exception as e:
+        log("warn", f"Gagal kirim sinyal: {e}")
+    time.sleep(2)
+    if os.path.exists(STOP_FILE):
+        os.remove(STOP_FILE)
 
 
 # ─── Status check (live API call for accurate timers) ─────────────────────────
 def show_status():
-    """Live status check — calls API for real timers, not stale log parsing."""
+    """Cek status live — panggil API untuk timer real, bukan log basi."""
     state = load_claim_state()
     bal = state.get("balance", 0)
     lc = state.get("last_claim", 0)
@@ -1184,171 +1071,103 @@ def show_status():
     h, m = ago // 3600, (ago % 3600) // 60
     last_claim_wib = datetime.fromtimestamp(updated, tz=WIB).strftime("%H:%M WIB") if updated > 0 else "N/A"
 
-    # Bot running? (use PID file first, fall back to filtered pgrep)
-    bot_status = "❌ NOT running"
-    if os.path.exists(PID_FILE):
-        try:
-            pid = int(open(PID_FILE).read().strip())
-            os.kill(pid, 0)  # check if alive
-            bot_status = f"✅ Running (PID {pid})"
-        except (ValueError, ProcessLookupError, PermissionError):
-            pass
-    if bot_status == "❌ NOT running":
-        import subprocess
-        try:
-            pids = subprocess.getoutput('pgrep -f "python3 bot\\.py"').strip().split("\n")
-            for p in pids:
-                p = p.strip()
-                if not p:
-                    continue
-                try:
-                    cmdline = subprocess.getoutput(f'ps -p {p} -o args=').strip()
-                    if 'bot.py' in cmdline and '--status' not in cmdline and '--once' not in cmdline and '--login' not in cmdline and '--stop' not in cmdline and '--restart' not in cmdline:
-                        bot_status = f"✅ Running (PID {p})"
-                        break
-                except Exception:
-                    pass
-        except Exception:
-            bot_status = "❓ Unknown"
+    import subprocess
+    try:
+        pid = subprocess.getoutput('pgrep -f "python3 bot_v2_2\\.py"').strip().split("\n")[0]
+        bot_status = "✅ Berjalan" if pid else "❌ Mati"
+    except Exception:
+        bot_status = "❓ Tidak tahu"
 
-    # ─── LIVE API CALL for real timers ───
     cfg = load_config()
-    # Auto-restore token from backup if missing
     if not os.path.exists(TOKEN_FILE) and os.path.exists(os.path.join(SCRIPT_DIR, "token-backup.json")):
         import shutil
         shutil.copy2(os.path.join(SCRIPT_DIR, "token-backup.json"), TOKEN_FILE)
         os.chmod(TOKEN_FILE, 0o600)
     token = get_session(cfg, allow_login=False)
-    
+
     mining_next_str = "N/A"
     group_next_str = "N/A"
-    refs = "N/A"
-    streak_burned = "N/A"
-    rec = "N/A"
     group_status = "N/A"
     per_claim = "N/A"
     per_day = "N/A"
-    last_group_claim = "N/A"
-    last_recovery = "N/A"
+    rec = "N/A"
 
     if token:
         device_id = cfg["deviceId"]
-        
-        # Live mining timer
+
         try:
             ic = check_claimable(token, device_id)
-            if ic.get("isClaimable"):
-                mining_next_str = "claimable now!"
+            nf = ic.get("nextFrame")
+            if nf:
+                remain = max(0, int((nf - time.time() * 1000) / 1000))
+                mining_next_str = format_countdown(remain)
             else:
-                nf = ic.get("nextFrame")
-                if nf:
-                    remain = max(0, int((nf - time.time() * 1000) / 1000))
-                    mining_next_str = format_countdown(remain)
-                else:
-                    mining_next_str = "claimable now!"
+                mining_next_str = "bisa klaim sekarang!"
         except Exception as e:
             mining_next_str = f"API error: {e}"
-        
-        # Live group timer
+
         try:
             gdata = get_group_mining_list(token, device_id)
             if gdata:
                 groups = gdata.get("groups", [])
                 gnext = gdata.get("nextTimeClaim")
-                already = gdata.get("requesterHasClaimedToday", False)
                 total_reward = sum(g.get("totalReward", 0) for g in groups)
                 if gnext:
                     remain = max(0, int((gnext - time.time() * 1000) / 1000))
                     group_next_str = format_countdown(remain)
+                if gdata.get("isClaimable"):
+                    group_status = f"bisa klaim! ({len(groups)} grup)"
+                elif gdata.get("requesterHasClaimedToday", False):
+                    group_status = f"udah diklaim ({len(groups)} grup)"
                 else:
-                    group_next_str = "N/A"
-                if already:
-                    group_status = f"claimed today ({len(groups)} groups, pool: {total_reward})"
-                elif gdata.get("isClaimable"):
-                    group_status = f"claimable! ({len(groups)} groups, pool: {total_reward})"
-                else:
-                    group_status = f"pending ({len(groups)} groups, pool: {total_reward})"
+                    group_status = f"pending ({len(groups)} grup)"
         except Exception:
             pass
-        
-        # Live user info for refs/streak/recoverable + last claim time
+
         try:
             data = get_user_info(token, device_id)
             if data:
                 ti = data.get("token", {})
-                total_ref = ti.get("totalReferral", 0)
-                ref_dir = ti.get("directReferralsHashRate", 0) or 0
-                ref_ind = ti.get("indirectReferralsHashRate", 0) or 0
-                refs = f"{round(ref_dir + ref_ind, 2)} ({total_ref} refs)"
-                streak = ti.get("burningStreak", 0)
-                burned = ti.get("burnedCycles", 0)
-                streak_burned = f"{streak} / {burned}"
-                rec = f"{ti.get('itlgRecoverable', 0)}"
-                # Update balance from live data
                 bal = ti.get("interlinkGoldTokenAmount", bal)
-                # Update last claim time from live API (ground truth)
-                lct = ti.get("lastClaimTime")
-                if lct:
-                    lct_sec = int(lct / 1000)
-                    ago_live = int(time.time() - lct_sec)
-                    h_live, m_live = ago_live // 3600, (ago_live % 3600) // 60
-                    last_claim_wib = datetime.fromtimestamp(lct_sec, tz=WIB).strftime("%H:%M WIB")
-                    h, m = h_live, m_live  # override stale local values
-                    # Sync local state balance to avoid desync
-                    if state.get("balance", 0) != bal:
-                        save_claim_state(balance=bal)
+                rec = f"{ti.get('itlgRecoverable', 0)} ITLG"
         except Exception:
             pass
     else:
-        mining_next_str = "⚠️ No token (run: python bot.py --login)"
+        mining_next_str = "⚠️ Token tidak ada"
 
-    # Per claim/day from history
     if history:
         avg = round(sum(history) / len(history), 1)
         per_claim = f"{avg} ITLG"
         per_day = f"{round(avg * 6, 1)} ITLG"
 
-    # Parse log for last group claim + recovery (these are events, not timers — safe to parse)
-    try:
-        with open(os.path.join(SCRIPT_DIR, "interlink.log")) as f:
-            raw_log = f.read()
-        lgc = re.findall(r"Group mining claimed!\s+\+([\d?]+) ITLG", raw_log)
-        lrc = re.findall(r"Recovery complete!\s+\+([\d]+) ITLG", raw_log)
-        if lgc: last_group_claim = f"+{lgc[-1]} ITLG"
-        if lrc: last_recovery = f"+{lrc[-1]} ITLG"
-    except Exception:
-        pass
-
-    print(f"\n  {C.CY}{C.B}╔══════════════════════════════════════╗{C.R}")
-    print(f"  {C.CY}{C.B}║   Interlink ITLG — Status             ║{C.R}")
-    print(f"  {C.CY}{C.B}╚══════════════════════════════════════╝{C.R}\n")
-    print(f"  🤖 Bot: {bot_status}")
-    print(f"  💰 Balance: {bal} ITLG")
-    print(f"  🎯 Last claim: +{lc} ITLG ({h}h {m}m ago, {last_claim_wib})")
-    if history:
-        print(f"  📊 History: {' → '.join(str(x) for x in history[-5:])}")
-    print(f"  📈 Per claim: {per_claim} | Per day: {per_day}")
-    print(f"  👥 Refs: {refs}")
-    print(f"  🔥 Streak/Burned: {streak_burned}")
-    print(f"  💎 Recoverable: {rec} ITLG")
-    if last_recovery != "N/A":
-        print(f"  ♻️ Last recovery: {last_recovery}")
-    print(f"  ─────────────────────────────")
-    print(f"  👥 Group: {group_status}")
-    if last_group_claim != "N/A":
-        print(f"  🎯 Last group claim: {last_group_claim}")
-    print(f"  ⏳ Group next: {group_next_str}")
-    print(f"  ⏳ Mining next: {mining_next_str}")
     print()
+    print(f"  {C.CY}{C.B}╔══════════════════════════════════════╗{C.R}")
+    print(f"  {C.CY}{C.B}║   Interlink ITLG — Status             ║{C.R}")
+    print(f"  {C.CY}{C.B}╚══════════════════════════════════════╝{C.R}")
+    print()
+    print(f"  🤖 Bot: {bot_status}")
+    print(f"  💰 Saldo: {bal} ITLG")
+    print(f"  🎯 Klaim terakhir: +{lc} ITLG ({h}j {m}m lalu, {last_claim_wib})")
+    if history:
+        print(f"  📊 Riwayat: {' → '.join(str(x) for x in history[-5:])}")
+    print(f"  📈 Rata-rata: {per_claim} | Per hari: {per_day}")
+    print(f"  💎 Bisa pulih: {rec}")
+    print(f"  ───────────── group ─────────────")
+    print(f"  👥 Grup: {group_status}")
+    print(f"  ⏳ Group berikutnya: {group_next_str}")
+    print(f"  ───────────── mining ─────────────")
+    print(f"  ⏳ Mining berikutnya: {mining_next_str}")
+    print()
+
 def main():
     parser = argparse.ArgumentParser(description="Interlink Labs Auto Claim")
-    parser.add_argument("--once", action="store_true", help="Single run, then exit")
-    parser.add_argument("--login", action="store_true", help="Force re-login via OTP")
-    parser.add_argument("--login-face", action="store_true", help="Login with face photo (selfie)")
-    parser.add_argument("--photo", type=str, default=None, help="Selfie photo path (use with --login-face)")
-    parser.add_argument("--status", action="store_true", help="Live status check (API call)")
-    parser.add_argument("--stop", action="store_true", help="Stop the running bot")
-    parser.add_argument("--restart", action="store_true", help="Stop then start the bot")
+    parser.add_argument("--once", action="store_true", help="Jalankan sekali, lalu keluar")
+    parser.add_argument("--login", action="store_true", help="Paksa login ulang via OTP")
+    parser.add_argument("--login-face", action="store_true", help="Login pakai foto selfie")
+    parser.add_argument("--photo", type=str, default=None, help="Path foto selfie (pakai dengan --login-face)")
+    parser.add_argument("--status", action="store_true", help="Cek status live (panggil API)")
+    parser.add_argument("--stop", action="store_true", help="Hentikan bot yang sedang berjalan")
+    parser.add_argument("--restart", action="store_true", help="Stop lalu start ulang bot")
     args = parser.parse_args()
 
     print(f"\n  {C.CY}{C.B}╔════════════════════════════════════╗{C.R}")
@@ -1362,26 +1181,41 @@ def main():
     if args.login:
         if os.path.exists(TOKEN_FILE):
             os.remove(TOKEN_FILE)
-        access, _ = do_login(cfg)
+        # ─── Pilih metode login ───
+        has_face = cfg.get("facePhoto") and os.path.exists(cfg.get("facePhoto", ""))
+        if has_face:
+            print(f"\n  {C.B}Pilih metode login:{C.R}")
+            print(f"  {C.CY}1{C.R}  OTP (via email)")
+            print(f"  {C.CY}2{C.R}  Face Login (via selfie)")
+            pilihan = input(f"\n  {C.B}> {C.R}").strip()
+            if pilihan == "2":
+                access, _ = do_face_login(cfg)
+            else:
+                access, _ = do_login(cfg)
+        else:
+            log("info", "Face login tidak dikonfigurasi. Gunakan OTP.")
+            log("info", "Untuk face login: isi facePhoto di config.json atau pakai --login-face --photo selfie.jpg")
+            access, _ = do_login(cfg)
         if access:
-            log("ok", "Login complete. Run: python bot.py")
+            log("ok", "Login selesai. Jalankan: python bot_v2_2.py")
         return
 
     if args.login_face:
-        # Backup existing token before face login (extra safety net)
-        import shutil
         if os.path.exists(TOKEN_FILE):
+            import shutil
             shutil.copy2(TOKEN_FILE, TOKEN_FILE + ".pre-login")
         access, _ = do_face_login(cfg, photo_override=args.photo)
         if access:
-            log("ok", "Face login complete. Run: python bot.py")
-            # Keep .pre-login as extra backup (don't delete)
-        else:
-            # Restore previous token if face login failed
+            log("ok", "Face login selesai. Jalankan: python bot_v2_2.py")
             pre = TOKEN_FILE + ".pre-login"
             if os.path.exists(pre):
+                os.remove(pre)
+        else:
+            pre = TOKEN_FILE + ".pre-login"
+            if os.path.exists(pre):
+                import shutil
                 shutil.move(pre, TOKEN_FILE)
-                log("info", "Restored previous token (face login failed).")
+                log("info", "Token sebelumnya dipulihkan (face login gagal).")
         return
 
     if args.status:
@@ -1395,8 +1229,7 @@ def main():
     if args.restart:
         stop_bot()
         time.sleep(3)
-        log("info", "Starting fresh...")
-        # Continue to run_loop below
+        log("info", "Mulai ulang...")
 
     if args.once:
         run_once(cfg)
@@ -1404,36 +1237,19 @@ def main():
 
     # ─── Main loop with crash-proof auto-restart ───
     cleanup_old_files(max_age_days=2)
-    
-    # Don't start if already running (use PID file for reliability)
-    if os.path.exists(PID_FILE):
-        try:
-            old_pid = int(open(PID_FILE).read().strip())
-            # Check if process is actually alive
-            os.kill(old_pid, 0)
-            log("warn", f"Bot already running (PID {old_pid}). Use --stop first or --status to check.")
-            return
-        except (ValueError, ProcessLookupError, PermissionError):
-            # Stale PID file — process is dead
-            try:
-                os.remove(PID_FILE)
-            except Exception:
-                pass
-    # Write our PID (atomic: write to temp, then rename)
-    try:
-        tmp = PID_FILE + ".tmp"
-        with open(tmp, "w") as f:
-            f.write(str(os.getpid()))
-        os.rename(tmp, PID_FILE)
-    except Exception:
-        pass
+
+    import subprocess
+    existing = subprocess.getoutput('pgrep -f "python3 bot_v2_2\\.py"').strip().split("\n")
+    existing = [p for p in existing if p and p != str(os.getpid())]
+    if existing and not args.restart:
+        log("warn", "Bot sudah berjalan. Gunakan --stop dulu atau --status untuk cek.")
+        return
 
     MAX_RESTARTS = 50
     restart_count = 0
     while restart_count < MAX_RESTARTS:
-        # Check stopfile — exit cleanly if --stop was called
         if os.path.exists(STOP_FILE):
-            log("info", "Stop signal received. Exiting.")
+            log("info", "Sinyal stop diterima. Keluar.")
             try:
                 os.remove(STOP_FILE)
             except Exception:
@@ -1442,34 +1258,27 @@ def main():
         try:
             run_loop(cfg)
         except KeyboardInterrupt:
-            print(f"\n\n  {C.DIM}Stopped.{C.R}\n")
+            print(f"\n\n  {C.DIM}Berhenti.{C.R}\n")
             break
         except Exception as e:
             restart_count += 1
             log("err", f"Crash #{restart_count}: {e}")
-            log("info", f"Auto-restart in 30s... (attempt {restart_count}/{MAX_RESTARTS})")
+            log("info", f"Restart otomatis dalam 30 detik... (percobaan {restart_count}/{MAX_RESTARTS})")
             try:
                 send_telegram_notif(cfg, {
+                    "crash": True,
                     "claimed": 0, "before": 0, "after": 0,
                     "rate_per_claim": 0, "rate_per_day": None, "group_rate": 0,
                 })
             except Exception:
                 pass
             time.sleep(30)
-            # Clean up before restart
             cleanup_old_files(max_age_days=2)
-            log("step", f"Restarting... (attempt {restart_count}/{MAX_RESTARTS})")
+            log("step", f"Restart... (percobaan {restart_count}/{MAX_RESTARTS})")
             continue
-    
-    if restart_count >= MAX_RESTARTS:
-        log("err", f"Max restarts ({MAX_RESTARTS}) reached. Bot stopped. Check logs.")
 
-    # Clean up PID file on exit
-    if os.path.exists(PID_FILE):
-        try:
-            os.remove(PID_FILE)
-        except Exception:
-            pass
+    if restart_count >= MAX_RESTARTS:
+        log("err", f"Max restart ({MAX_RESTARTS}) tercapai. Bot berhenti. Cek log.")
 
 if __name__ == "__main__":
     main()
