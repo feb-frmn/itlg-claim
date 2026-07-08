@@ -17,11 +17,13 @@ Satu script Python. Login sekali pakai OTP atau selfie, lalu klaim selamanya. No
 ## What's New in v2.2
 
 - Full bahasa Indonesia di semua notifikasi Telegram dan log
-- Perbaikan format klaim: "✅ Klaim Berhasil" + "Per klaim" + "pending aktivasi" untuk group
-- Penambahan `demo_test.py` untuk testing output tanpa menjalankan bot
-- Perbaikan lag & bug pesan (group rate selalu muncul benar)
-- Header bot dan gateway sekarang full Indonesia
-- Lebih cepat dan stabil (human delay tetap ada untuk safety)
+- **Fixed**: Mining claim notif tidak lagi menampilkan "👥 Group: 0.71/hari" dari API groupMiningRate (misleading). Hanya real per-claim + per-hari dari history.
+- **Fixed**: Group claim notif sekarang menampilkan "Group reward: XXX ITLG total" (actual amount), bukan rate.
+- Gateway lebih robust: pakai `requests` + long polling + exponential backoff + auto-reconnect (tahan timeout di VPS Oracle)
+- Penambahan `demo_test.py` untuk verifikasi output notif
+- Perbaikan lag & bug pesan
+- Header bot dan gateway full Indonesia
+- Lebih cepat dan stabil
 
 ## Quick Start
 
@@ -72,7 +74,7 @@ python bot.py --login-face  # upload photo → face verify → login
 ```
 Face photo: clear selfie, good lighting, full face visible. Format: JPG/PNG.
 
-## What's New in v2.1
+## What's New in v2.2
 
 | Feature | Detail |
 |---|---|

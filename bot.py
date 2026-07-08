@@ -757,11 +757,10 @@ def send_telegram_notif(cfg, info):
     elif claim_type == "recovery":
         text = f"✅ Pemulihan Berhasil\n\n💰 Dapat: +{claimed_str} ITLG (dari burn recovery)\n📊 Saldo: {before_str} → {after_str} ITLG\n🕐 {now}\n\nKlaim mining berikutnya dalam 4 jam."
     elif claim_type == "group":
-        text = f"✅ Group Mining Berhasil\n\n💰 Dapat: +{claimed_str} ITLG\n📊 Saldo: {before_str} → {after_str} ITLG\n👥 Group: {group_rate}/hari\n🕐 {now}\n\nGroup berikutnya dalam 24 jam."
+        text = f"✅ Group Mining Berhasil\n\n💰 Dapat: +{claimed_str} ITLG\n📊 Saldo: {before_str} → {after_str} ITLG\n👥 Group reward: {group_rate} ITLG total\n🕐 {now}\n\nGroup berikutnya dalam 24 jam."
     else:
         day_line = f"\n📈 Per hari: ~{per_day} ITLG (6 klaim)" if per_day else ""
-        group_line = f"\n👥 Group: {group_rate}/hari (aktif!)" if group_rate > 0 else "\n👥 Group: pending aktivasi"
-        text = f"✅ Klaim Berhasil\n\n💰 Dapat: +{claimed_str} ITLG\n📊 Saldo: {before_str} → {after_str} ITLG\n⏱️ Per klaim: {per_claim} ITLG{day_line}{group_line}\n🕐 {now}\n\nKlaim berikutnya dalam 4 jam."
+        text = f"✅ Klaim Berhasil\n\n💰 Dapat: +{claimed_str} ITLG\n📊 Saldo: {before_str} → {after_str} ITLG\n⏱️ Per klaim: {per_claim} ITLG{day_line}\n🕐 {now}\n\nKlaim berikutnya dalam 4 jam."
 
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     payload = {"chat_id": chat_id, "text": text}
@@ -838,7 +837,7 @@ def attempt_claim(cfg, token):
                 "after": balance_after,
                 "rate_per_claim": rates["actual_per_claim"] if rates["has_history"] else claimed,
                 "rate_per_day": rates["actual_per_day"] if rates["has_history"] else None,
-                "group_rate": group_rate,
+                "group_rate": 0,
                 "claim_type": "mine",
             })
         except Exception as e:
@@ -873,7 +872,8 @@ def attempt_claim(cfg, token):
                     "after": balance_after,
                     "rate_per_claim": rates["actual_per_claim"] if rates["has_history"] else claimed,
                     "rate_per_day": rates["actual_per_day"] if rates["has_history"] else None,
-                    "group_rate": group_rate,
+                    "group_rate": 0,
+                    "claim_type": "mine",
                 })
             except Exception:
                 pass

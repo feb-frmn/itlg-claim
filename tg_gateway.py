@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Gateway Telegram ITLG v2.1 — Interface perintah untuk Bot Klaim ITLG.
+Gateway Telegram ITLG v2.2 — Interface perintah untuk Bot Klaim ITLG.
 
-v2.1 changelog:
+v2.2 changelog:
   - /groupclaim command (force group mining claim)
   - Private bot guard (non-owner DM → rejected)
   - claim_type field in notifications (mine vs group)
@@ -79,34 +79,47 @@ def get_valid_token(cfg):
 # ─── Telegram ─────────────────────────────────────────────────────────────────
 
 def tg(token, method, **params):
+    """Use requests for more reliable SSL handling."""
     url = f"https://api.telegram.org/bot{token}/{method}"
-    body = json.dumps(params).encode()
-    req = urllib.request.Request(url, data=body,
-        headers={"Content-Type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            return json.loads(r.read())
-    except Exception:
-        return None
+    for attempt in range(4):
+        try:
+            resp = requests.post(url, json=params, timeout=25, headers={"Content-Type": "application/json"})
+            if resp.ok:
+                return resp.json()
+            time.sleep(1 + attempt)
+        except Exception as e:
+            if attempt == 3:
+                return None
+            time.sleep(1 + attempt)
+    return None
 
 def send(cid, text, token, reply_to=None):
-    # Telegram max message length = 4096
     if len(text) > 4000:
         text = text[:3997] + "..."
-    return tg(token, "sendMessage", chat_id=cid, text=text,
-              parse_mode="HTML", reply_to_message_id=reply_to)
+    try:
+        return tg(token, "sendMessage", chat_id=cid, text=text,
+                  parse_mode="HTML", reply_to_message_id=reply_to)
+    except Exception as e:
+        print(f"[send error] {e}")
+        return None
 
-def poll(token, offset=None):
-    params = {"timeout": 30, "allowed_updates": json.dumps(["message"])}
+def poll(token, offset=None, backoff=0):
+    """Long polling with auto backoff on failure."""
+    params = {"timeout": 30, "allowed_updates": ["message"]}
     if offset:
         params["offset"] = offset
-    qs = urllib.parse.urlencode(params)
-    url = f"https://api.telegram.org/bot{token}/getUpdates?{qs}"
-    try:
-        with urllib.request.urlopen(url, timeout=35) as r:
-            return json.loads(r.read())
-    except Exception:
-        return None
+    url = f"https://api.telegram.org/bot{token}/getUpdates"
+    for attempt in range(5):
+        try:
+            resp = requests.get(url, params=params, timeout=35)
+            if resp.ok:
+                return resp.json(), 0  # reset backoff
+            time.sleep(1 + attempt + backoff)
+        except Exception as e:
+            if attempt == 4:
+                return None, min(backoff + 5, 60)
+            time.sleep(1 + attempt + backoff)
+    return None, min(backoff + 5, 60)
 
 # ─── Commands ─────────────────────────────────────────────────────────────────
 
@@ -471,7 +484,7 @@ COMMANDS = {
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
-    print("🤖 ITLG Telegram Gateway v2.1")
+    print("🤖 ITLG Telegram Gateway v2.2")
     print("  ☕ https://saweria.co/febfrmn\n")
 
     cfg = load_config()
@@ -483,10 +496,13 @@ def main():
         sys.exit(1)
 
     try:
-        r = urllib.request.urlopen(
-            f"https://api.telegram.org/bot{token}/getMe", timeout=10)
-        name = json.loads(r.read())["result"]["username"]
-        print(f"✅ Bot: @{name}")
+        resp = requests.get(f"https://api.telegram.org/bot{token}/getMe", timeout=15)
+        if resp.ok:
+            name = resp.json()["result"]["username"]
+            print(f"✅ Bot: @{name}")
+        else:
+            print(f"❌ Invalid token: HTTP {resp.status_code}")
+            sys.exit(1)
     except Exception as e:
         print(f"❌ Invalid token: {e}")
         sys.exit(1)
@@ -496,32 +512,55 @@ def main():
     print(f"Listening...\n")
 
     offset = None
+    backoff = 0
+    consecutive_errors = 0
+    print("✅ Gateway listening (long-poll + auto-reconnect enabled)\n")
+
     while True:
-        updates = poll(token, offset)
-        if not updates or not updates.get("ok"):
-            time.sleep(2)
-            continue
-        for u in updates.get("result", []):
-            offset = u["update_id"] + 1
-            msg = u.get("message", {})
-            text = msg.get("text", "")
-            cid = msg.get("chat", {}).get("id")
-            if not text or not cid:
-                continue
-            if str(cid) != str(owner):
-                send(cid, "🔒 <b>Private Bot</b>\n\nBot ini cuma buat admin.", token)
-                continue
-            cmd = text.strip().lower().split()[0]
-            handler = COMMANDS.get(cmd)
-            if handler:
-                print(f"[{fmt_wib()}] {cmd}")
-                try:
-                    handler(cid, token)
-                except Exception as e:
-                    print(f"[ERROR] {cmd}: {e}")
-                    send(cid, f"❌ Error: {e}", token)
+        try:
+            result = poll(token, offset, backoff)
+            if result is None:
+                updates, new_backoff = None, backoff
             else:
-                send(cid, f"Unknown command. Tap /help", token)
+                updates, new_backoff = result
+
+            if not updates or not updates.get("ok"):
+                consecutive_errors += 1
+                backoff = new_backoff if new_backoff else min(5 * consecutive_errors, 60)
+                print(f"[{fmt_wib()}] Poll failed (backoff {backoff}s, err#{consecutive_errors})")
+                time.sleep(backoff)
+                continue
+
+            consecutive_errors = 0
+            backoff = 0
+
+            for u in updates.get("result", []):
+                offset = u["update_id"] + 1
+                msg = u.get("message", {})
+                text = msg.get("text", "")
+                cid = msg.get("chat", {}).get("id")
+                if not text or not cid:
+                    continue
+                if str(cid) != str(owner):
+                    send(cid, "🔒 <b>Private Bot</b>\n\nBot ini cuma buat admin.", token)
+                    continue
+                cmd = text.strip().lower().split()[0]
+                handler = COMMANDS.get(cmd)
+                if handler:
+                    print(f"[{fmt_wib()}] {cmd}")
+                    try:
+                        handler(cid, token)
+                    except Exception as e:
+                        print(f"[ERROR] {cmd}: {e}")
+                        send(cid, f"❌ Error: {e}", token)
+                else:
+                    send(cid, "Unknown command. Tap /help", token)
+
+        except Exception as e:
+            consecutive_errors += 1
+            backoff = min(5 * consecutive_errors, 60)
+            print(f"[GATEWAY ERROR] {e} — reconnecting in {backoff}s")
+            time.sleep(backoff)
 
 if __name__ == "__main__":
     main()

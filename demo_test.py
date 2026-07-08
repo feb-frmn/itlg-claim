@@ -33,13 +33,12 @@ def demo_claim_success():
     now = fmt_wib()
     
     day_line = f"\n📈 Per hari: ~{per_day} ITLG (6 klaim)"
-    group_line = f"\n👥 Group: {group_rate}/hari (aktif!)" if group_rate > 0 else "\n👥 Group: pending aktivasi"
     
     text = (
         f"✅ Klaim Berhasil\n\n"
         f"💰 Dapat: +{claimed} ITLG\n"
         f"📊 Saldo: {before} → {after} ITLG\n"
-        f"⏱️ Per klaim: {per_claim} ITLG{day_line}{group_line}\n"
+        f"⏱️ Per klaim: {per_claim} ITLG{day_line}\n"
         f"🕐 {now}\n\n"
         f"Klaim berikutnya dalam 4 jam."
     )
@@ -79,7 +78,7 @@ def demo_group():
         f"✅ Group Mining Berhasil\n\n"
         f"💰 Dapat: +{claimed} ITLG\n"
         f"📊 Saldo: {before} → {after} ITLG\n"
-        f"👥 Group: {group_rate}/hari\n"
+        f"👥 Group reward: {group_rate} ITLG total\n"
         f"🕐 {now}\n\n"
         f"Group berikutnya dalam 24 jam."
     )
