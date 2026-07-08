@@ -361,7 +361,7 @@ def login_with_face(cfg, image_key):
 
 def do_face_login(cfg, photo_override=None):
     """
-    Full face login flow: verify passcode → get presigned URL → upload photo → login.
+    Full face login flow with detailed error messages.
     Returns (access_token, refresh_token) or (None, None).
     """
     lid = cfg.get("loginId", "")
@@ -375,6 +375,20 @@ def do_face_login(cfg, photo_override=None):
     if not photo_path or not os.path.exists(photo_path):
         log("err", f"Foto wajah tidak ditemukan: {photo_path}")
         log("info", "Jalankan: python setup.py (isi facePhoto path)")
+        return None, None
+
+    # Validate photo file
+    try:
+        file_size = os.path.getsize(photo_path)
+        if file_size < 50000:
+            log("err", f"Foto terlalu kecil ({file_size} bytes). Minimal 50KB.")
+            log("info", "Gunakan foto selfie jelas, minimal 300x300 pixel, format PNG/JPG.")
+            return None, None
+        if file_size > 5000000:
+            log("err", f"Foto terlalu besar ({file_size} bytes). Maksimal 5MB.")
+            return None, None
+    except Exception as e:
+        log("err", f"Gagal cek ukuran foto: {e}")
         return None, None
 
     log("step", "Verifikasi passcode...")
@@ -409,7 +423,8 @@ def do_face_login(cfg, photo_override=None):
 
     log("step", "Upload foto wajah...")
     if not upload_face(upload_url, face_data):
-        log("err", "Upload foto wajah gagal.")
+        log("err", "Upload foto wajah gagal (server reject).")
+        log("info", "Coba: foto lebih jelas, cahaya cukup, wajah full frame.")
         return None, None
     log("ok", "Foto wajah terupload.")
 
@@ -439,11 +454,32 @@ def do_face_login(cfg, photo_override=None):
         log("info", f"Token disimpan. Refresh token: {'ADA' if refresh_tok else 'TIDAK ADA'}")
         return token, refresh_tok
 
-    msg = result.get("message", "")
-    if "E304" in str(msg):
+    # Detailed error messages
+    msg = str(result.get("message", "")).upper()
+    status = result.get("statusCode")
+
+    if "E304" in msg or "NOT MATCH" in msg or "TIDAK COCOK" in msg:
         log("err", "WAJAH TIDAK COCOK! Selfie berbeda dengan foto registrasi.")
+        log("info", "Tips: Gunakan foto yang mirip dengan foto daftar (angle, cahaya, ekspresi).")
+    elif "E301" in msg or "INVALID" in msg:
+        log("err", "Foto tidak valid atau format salah.")
+        log("info", "Gunakan PNG atau JPG, ukuran 100KB-2MB, wajah jelas.")
+    elif "E302" in msg or "BLUR" in msg or "LOW QUALITY" in msg:
+        log("err", "Foto terlalu blur atau kualitas rendah.")
+        log("info", "Ambil foto dengan cahaya cukup, fokus tajam, tidak gerak.")
+    elif "E303" in msg or "FACE NOT DETECTED" in msg:
+        log("err", "Wajah tidak terdeteksi di foto.")
+        log("info", "Pastikan wajah full frame, tidak tertutup masker/kacamata hitam.")
+    elif status == 400:
+        log("err", f"Request error (400): {result.get('message', 'bad request')}")
+    elif status == 401:
+        log("err", "Passcode salah atau sesi expired.")
+    elif status == 429:
+        log("err", "Terlalu banyak percobaan. Tunggu 5-10 menit.")
     else:
-        log("err", f"Face login gagal: {msg}")
+        log("err", f"Face login gagal: {result.get('message', 'unknown error')} (status: {status})")
+        log("info", "Coba: foto lebih terang, angle sama dengan foto daftar, atau pakai OTP login.")
+
     return None, None
 
 # ─── Refresh ──────────────────────────────────────────────────────────────────
