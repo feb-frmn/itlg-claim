@@ -3,10 +3,10 @@
 Interlink Labs Auto Claim v2.2 — login sekali, klaim selamanya (mining + group + recovery). Full bahasa Indonesia.
 
 Penggunaan:
-  python bot_v2_2.py              # mode loop (hitung mundur live, auto klaim tiap 4 jam)
-  python bot_v2_2.py --once        # jalankan sekali, cek + klaim jika bisa, lalu keluar
-  python bot_v2_2.py --login       # paksa login ulang (kirim OTP)
-  python bot_v2_2.py --login-face --photo selfie.jpg  # face login with photo file
+  python bot.py              # mode loop (hitung mundur live, auto klaim tiap 4 jam)
+  python bot.py --once        # jalankan sekali, cek + klaim jika bisa, lalu keluar
+  python bot.py --login       # paksa login ulang (kirim OTP)
+  python bot.py --login-face --photo selfie.jpg  # face login with photo file
 
 Bot auto claim ITLG Interlink Labs. Mining 4 jam, group mining, recovery otomatis.
 Login sekali saja, klaim selamanya. Notif Telegram full bahasa Indonesia.
@@ -14,7 +14,7 @@ Login sekali saja, klaim selamanya. Notif Telegram full bahasa Indonesia.
 Config: config.json (jalankan `python setup.py` untuk setup interaktif)
 """
 
-import sys, os, json, time, imaplib, email, re, hashlib, base64, argparse, random
+import sys, os, json, time, imaplib, email, re, hashlib, base64, argparse, random, random
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 
@@ -159,13 +159,19 @@ def token_expired(token, buffer=300):
 
 # ─── HTTP ─────────────────────────────────────────────────────────────────────
 def headers(token=None, device_id=None, cfg=None):
-    model = "Redmi Note 8 Pro"
-    brand = "XiaoMi"
+    model = "M2101K6G"
+    brand = "POCO"
     if cfg:
         model = cfg.get("deviceModel", model)
         brand = cfg.get("deviceBrand", brand)
+    # Anti-ban human fingerprint: rotate realistic UA while keeping deviceId consistent
+    ua_variants = [
+        "okhttp/4.12.0",
+        "okhttp/4.9.0",
+        "Dalvik/2.1.0 (Linux; U; Android 11; M2101K6G Build/RKQ1.200826.002)"
+    ]
     h = {
-        "User-Agent": "okhttp/4.12.0",
+        "User-Agent": random.choice(ua_variants),
         "Content-Type": "application/json",
         "Accept-Encoding": "gzip",
         "version": APP_VER,
@@ -174,6 +180,7 @@ def headers(token=None, device_id=None, cfg=None):
         "x-brand": brand,
         "x-system-name": "Android",
         "x-bundle-id": "org.ai.interlinklabs.interlinkId",
+        "x-app-version": APP_VER,
     }
     if device_id:
         h["x-unique-id"] = device_id
@@ -470,7 +477,7 @@ def get_session(cfg, allow_login=True):
         if new_access:
             return new_access
     if not allow_login:
-        log("warn", "Tidak ada token valid. Jalankan: python bot_v2_2.py --login atau --login-face")
+        log("warn", "Tidak ada token valid. Jalankan: python bot.py --login atau --login-face")
         return None
     if cfg.get("facePhoto") and os.path.exists(cfg["facePhoto"]):
         log("warn", "Token tidak valid. Mencoba face login...")
@@ -514,21 +521,32 @@ def claim_airdrop(token, device_id):
 
 # ─── Recovery (burn cycle recovery, check every claim cycle) ──────────────────
 def check_recovery(token, device_id):
-    """Check if any burned ITLG is recoverable right now."""
+    """Check if any burned ITLG is recoverable right now. Full audit fix: use real keys + fallback to user info."""
+    # Primary: /total-recoverable
     r = api_get("/recovery/total-recoverable", token, device_id)
     d = safe_json(r)
     if d.get("statusCode") == 200:
         data = d.get("data", {})
-        return data.get("canRecover", False), data.get("totalBisa dipulihkan", 0)
+        can = data.get("canRecover", False)
+        total = data.get("totalRecoverable", 0) or data.get("totalBisa dipulihkan", 0)
+        if can or total > 0:
+            return True, total
+    # Fallback to current-user-full (more reliable for isRecoverable + itlgRecoverable)
+    user = get_user_info(token, device_id)
+    if user:
+        ti = user.get("token", {})
+        if ti.get("isRecoverable") or ti.get("itlgRecoverable", 0) > 0:
+            return True, ti.get("itlgRecoverable", 0) or ti.get("itlgBisa dipulihkan", 0)
     return False, 0
 
 def get_recoverable_burns(token, device_id):
-    """Get list of burn transactions that can be recovered."""
+    """Get list of burn transactions that can be recovered. Audit fix: check multiple real keys."""
     r = api_get("/recovery/my", token, device_id)
     d = safe_json(r)
     if d.get("statusCode") == 200:
         burns = d.get("data", {}).get("data", [])
-        return [b for b in burns if b.get("isBisa dipulihkan")]
+        # Real API uses isRecoverable + totalRecoverable, fallback old keys
+        return [b for b in burns if b.get("isRecoverable") or b.get("totalRecoverable", 0) > 0 or b.get("isBisa dipulihkan")]
     return []
 
 def attempt_recovery(cfg, token):
@@ -698,7 +716,7 @@ def show_dashboard(token, device_id):
     total_ref   = ti.get("totalReferral", 0)
     streak      = ti.get("burningStreak", 0)
     burned      = ti.get("burnedCycles", 0)
-    recoverable = ti.get("itlgBisa dipulihkan", 0)
+    recoverable = ti.get("itlgRecoverable", 0)
     has_group   = rates["group"] > 0
     W = 38
     print()
@@ -913,7 +931,16 @@ def run_once(cfg):
     else:
         log("info", "Recovery: belum ada yang bisa dipulihkan.")
 
+
 def run_loop(cfg):
+    # Write PID immediately so gateway detects us
+    try:
+        with open(".bot.pid", "w") as pf:
+            pf.write(str(os.getpid()))
+        log("info", f"PID file written: {os.getpid()}")
+    except Exception as e:
+        log("warn", f"Could not write PID file: {e}")
+
     log("info", "Mode loop. Mining 4 jam + Group mining 24 jam.")
     token = get_session(cfg)
     if not token:
@@ -961,7 +988,6 @@ def run_loop(cfg):
             if token:
                 token, claimed = attempt_claim(cfg, token)
                 if claimed:
-                    token, _ = attempt_recovery(cfg, token)
                     ic = check_claimable(token, cfg["deviceId"])
                     mining_next = ic.get("nextFrame") or (time.time() * 1000 + CLAIM_INTERVAL * 1000)
                     log("ok", f"Siklus klaim selesai. Mining berikutnya: {format_countdown((mining_next - time.time() * 1000) / 1000)}")
@@ -978,6 +1004,13 @@ def run_loop(cfg):
                 log("err", "Gagal dapat token. Coba lagi 5 menit.")
                 mining_next = time.time() * 1000 + 300 * 1000
 
+            # ALWAYS try recovery after mining timer (independent of claim success).
+            # This is the root cause fix: recovery used to only run when claimed==True.
+            if token:
+                token, recovered = attempt_recovery(cfg, token)
+                if recovered > 0:
+                    log("ok", f"Auto pemulihan burn +{recovered} ITLG")
+
         if group_remain <= 0:
             print()
             log("step", "⏳ Waktu group mining! Proses klaim...")
@@ -988,6 +1021,12 @@ def run_loop(cfg):
                     group_next = time.time() * 1000 + GROUP_INTERVAL * 1000
             else:
                 group_next = time.time() * 1000 + 300 * 1000
+
+            # Try recovery after group cycle too
+            if token:
+                token, recovered = attempt_recovery(cfg, token)
+                if recovered > 0:
+                    log("ok", f"Auto pemulihan burn +{recovered} ITLG")
 
         time.sleep(10)
 
@@ -1036,7 +1075,7 @@ def stop_bot():
     log("info", "Sinyal stop terkirim. Bot akan berhenti dalam 10 detik.")
     import subprocess, signal
     try:
-        pids = subprocess.getoutput('pgrep -f "python3 bot_v2_2\\.py"').strip().split("\n")
+        pids = subprocess.getoutput('pgrep -f "python3 bot.py"').strip().split("\n")
         my_pid = str(os.getpid())
         pids = [p for p in pids if p and p != my_pid and p.strip()]
         for pid in pids:
@@ -1069,7 +1108,7 @@ def show_status():
 
     import subprocess
     try:
-        pid = subprocess.getoutput('pgrep -f "python3 bot_v2_2\\.py"').strip().split("\n")[0]
+        pid = subprocess.getoutput('pgrep -f "python3 bot.py"').strip().split("\n")[0]
         bot_status = "✅ Berjalan" if pid else "❌ Mati"
     except Exception:
         bot_status = "❓ Tidak tahu"
@@ -1193,7 +1232,7 @@ def main():
             log("info", "Untuk face login: isi facePhoto di config.json atau pakai --login-face --photo selfie.jpg")
             access, _ = do_login(cfg)
         if access:
-            log("ok", "Login selesai. Jalankan: python bot_v2_2.py")
+            log("ok", "Login selesai. Jalankan: python bot.py")
         return
 
     if args.login_face:
@@ -1202,7 +1241,7 @@ def main():
             shutil.copy2(TOKEN_FILE, TOKEN_FILE + ".pre-login")
         access, _ = do_face_login(cfg, photo_override=args.photo)
         if access:
-            log("ok", "Face login selesai. Jalankan: python bot_v2_2.py")
+            log("ok", "Face login selesai. Jalankan: python bot.py")
             pre = TOKEN_FILE + ".pre-login"
             if os.path.exists(pre):
                 os.remove(pre)
@@ -1235,7 +1274,7 @@ def main():
     cleanup_old_files(max_age_days=2)
 
     import subprocess
-    existing = subprocess.getoutput('pgrep -f "python3 bot_v2_2\\.py"').strip().split("\n")
+    existing = subprocess.getoutput('pgrep -f "python3 bot.py"').strip().split("\n")
     existing = [p for p in existing if p and p != str(os.getpid())]
     if existing and not args.restart:
         log("warn", "Bot sudah berjalan. Gunakan --stop dulu atau --status untuk cek.")
@@ -1244,6 +1283,13 @@ def main():
     MAX_RESTARTS = 50
     restart_count = 0
     while restart_count < MAX_RESTARTS:
+        # Write PID immediately so /status shows ✅ Berjalan
+        try:
+            with open(".bot.pid", "w") as pf:
+                pf.write(str(os.getpid()))
+        except Exception:
+            pass
+
         if os.path.exists(STOP_FILE):
             log("info", "Sinyal stop diterima. Keluar.")
             try:
@@ -1272,7 +1318,6 @@ def main():
             cleanup_old_files(max_age_days=2)
             log("step", f"Restart... (percobaan {restart_count}/{MAX_RESTARTS})")
             continue
-
     if restart_count >= MAX_RESTARTS:
         log("err", f"Max restart ({MAX_RESTARTS}) tercapai. Bot berhenti. Cek log.")
 

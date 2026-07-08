@@ -23,10 +23,38 @@ TOKEN_FILE  = SCRIPT_DIR / "token.json"
 PID_FILE    = SCRIPT_DIR / ".bot.pid"
 WIB         = timezone(timedelta(hours=7))
 
+
+_status_cache = {"ts": 0, "data": None}
+
+def get_cached_status(tk, device_id):
+    global _status_cache
+    now = time.time()
+    if now - _status_cache["ts"] < 45 and _status_cache["data"]:
+        return _status_cache["data"]
+    # Build fresh
+    data = itlg.get_user_info(tk, device_id) or {}
+    ic = itlg.check_claimable(tk, device_id) or {}
+    g = itlg.get_group_mining_list(tk, device_id) or {}
+    can_rec, tot_rec = itlg.check_recovery(tk, device_id)
+    _status_cache = {"ts": now, "data": (data, ic, g, can_rec, tot_rec)}
+    return _status_cache["data"]
+
+
 # Import bot.py — gives us all API functions + constants
 sys.path.insert(0, str(SCRIPT_DIR))
 import bot as itlg
 import requests
+
+# Simple TTL cache for speed (avoid full API on every TG command)
+_CACHE = {}
+def _cached(key, fn, ttl=30):
+    now = time.time()
+    if key in _CACHE and now - _CACHE[key][0] < ttl:
+        return _CACHE[key][1]
+    val = fn()
+    _CACHE[key] = (now, val)
+    return val
+
 requests.packages.urllib3.disable_warnings()
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -51,30 +79,80 @@ def countdown(seconds):
     return f"{h:02d}h {m:02d}m {s:02d}s"
 
 def bot_pid():
-    if not PID_FILE.exists():
-        return None
+    """Reliable detection if the ITLG bot daemon is running."""
+    import subprocess, os
+
+    # Try .bot.pid first
+    if PID_FILE.exists():
+        try:
+            pid = int(PID_FILE.read_text().strip())
+            os.kill(pid, 0)
+            return pid
+        except Exception:
+            pass
+
+    # Strong pgrep fallback
     try:
-        pid = int(PID_FILE.read_text().strip())
-        os.kill(pid, 0)
-        return pid
-    except (ValueError, ProcessLookupError, PermissionError, OSError):
-        return None
+        out = subprocess.getoutput('pgrep -f "python3 bot.py"').strip()
+        pids = []
+        for line in out.splitlines():
+            try:
+                p = int(line.strip())
+                # Read cmdline to confirm it's the bot, not gateway or tests
+                with open(f"/proc/{p}/cmdline", "rb") as fh:
+                    cmd = fh.read().decode(errors="ignore")
+                if "bot.py" in cmd and "tg_gateway" not in cmd and "test" not in cmd:
+                    pids.append(p)
+            except Exception:
+                continue
+        if pids:
+            return min(pids)  # oldest one is usually the main daemon
+    except Exception:
+        pass
+    return None
+
 
 def get_valid_token(cfg):
-    """Get a valid token, refreshing if needed. Returns token or None."""
-    access, refresh = load_tokens()
-    if access and not itlg.token_expired(access):
-        return access
-    if refresh:
-        new = itlg.do_refresh(cfg, refresh)
-        if new:
-            return new
-    # Try face login fallback
-    if cfg.get("facePhoto") and os.path.exists(cfg["facePhoto"]):
-        access, _ = itlg.do_face_login(cfg)
-        if access:
+    """Get a valid token, refreshing if needed. Returns token or None. Cached 25s for speed."""
+    def _do():
+        access, refresh = load_tokens()
+        if access and not itlg.token_expired(access):
             return access
-    return None
+        if refresh:
+            new = itlg.do_refresh(cfg, refresh)
+            if new:
+                return new
+        if cfg.get("facePhoto") and os.path.exists(cfg["facePhoto"]):
+            access, _ = itlg.do_face_login(cfg)
+            if access:
+                return access
+        return None
+    return _cached("token", _do, ttl=25)
+
+
+# === STATUS CACHE (makes /status fast) ===
+_STATUS_CACHE = {"ts": 0, "payload": None}
+STATUS_CACHE_TTL = 60  # seconds
+
+def get_status_payload(tk, device_id):
+    """Return cached or fresh status data for /status. Very important for speed."""
+    global _STATUS_CACHE
+    now = time.time()
+    if now - _STATUS_CACHE["ts"] < STATUS_CACHE_TTL and _STATUS_CACHE["payload"]:
+        return _STATUS_CACHE["payload"]
+
+    # Fresh fetch (this is the expensive part)
+    data = itlg.get_user_info(tk, device_id) or {}
+    ic = itlg.check_claimable(tk, device_id) or {}
+    g = itlg.get_group_mining_list(tk, device_id) or {}
+    can_rec, tot_rec = itlg.check_recovery(tk, device_id)
+
+    _STATUS_CACHE = {
+        "ts": now,
+        "payload": (data, ic, g, can_rec, tot_rec)
+    }
+    return _STATUS_CACHE["payload"]
+
 
 # ─── Telegram ─────────────────────────────────────────────────────────────────
 
@@ -141,6 +219,7 @@ def cmd_help(cid, token):
         "/balance      Quick balance\n"
         "/claim        Paksa klaim mining\n"
         "/groupclaim   Paksa klaim group\n"
+        "/recovery     Cek & klaim pemulihan burn\n"
         "/stop         Hentikan bot\n"
         "/restart      Restart ulang bot\n"
         "/help         This message",
@@ -158,8 +237,8 @@ def cmd_status(cid, token):
             token)
         return
 
-    # ── Mining status (from check-claimable) ──
-    ic = itlg.check_claimable(tk, device_id)
+    # ── Mining status (from check-claimable) - using cache for speed
+    data, ic, gdata, can_recover, total_recover = get_status_payload(tk, device_id)
     claimable = ic.get("isClaimable", False)
     nf = ic.get("nextFrame")
 
@@ -171,8 +250,8 @@ def cmd_status(cid, token):
     else:
         mining_str = "Unknown"
 
-    # ── User info (balance, refs, streak, recovery) ──
-    data = itlg.get_user_info(tk, device_id)
+    # ── User info from cache
+    # data already fetched above
     bal = 0
     refs_str = "N/A"
     streak_str = "N/A"
@@ -191,7 +270,7 @@ def cmd_status(cid, token):
         streak = ti.get("burningStreak", 0)
         burned = ti.get("burnedCycles", 0)
         streak_str = f"{streak} / {burned}"
-        recover_str = f"{ti.get('itlgBisa dipulihkan', 0)} ITLG"
+        recover_str = f"{ti.get('itlgRecoverable', ti.get('itlgBisa dipulihkan', 0))} ITLG"
 
         # Klaim terakhir time from API
         lct = ti.get("lastClaimTime")
@@ -210,8 +289,7 @@ def cmd_status(cid, token):
         per_claim_str = f"{avg} ITLG"
         per_day_str = f"{round(avg * 6, 1)} ITLG"
 
-    # ── Group mining ──
-    gdata = itlg.get_group_mining_list(tk, device_id)
+    # ── Group mining from cache
     group_str = "N/A"
     group_next_str = "N/A"
     if gdata:
@@ -229,9 +307,8 @@ def cmd_status(cid, token):
             g_remain = max(0, int((gnext - time.time() * 1000) / 1000))
             group_next_str = countdown(g_remain)
 
-    # ── Recovery ──
-    can_recover, total_recover = itlg.check_recovery(tk, device_id)
-    recovery_status = f"{total_recover} ITLG" if can_recover else "Nothing to recover"
+    # ── Recovery from cache
+    recovery_status = f"{total_recover} ITLG" if can_recover else "Tidak ada yang bisa dipulihkan saat ini"
 
     # ── Bot status ──
     pid = bot_pid()
@@ -249,7 +326,7 @@ def cmd_status(cid, token):
         f"👥 Referral    {refs_str}\n"
         f"🔥 Streak/Burn  {streak_str}\n"
         f"💎 Bisa dipulihkan  {recover_str}\n"
-        f"♻️ Recovery      {recovery_status}\n"
+        f"♻️ Pemulihan     {recovery_status}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━\n"
         f"👥 Group        {group_str}\n"
         f"⏳ Group berikutnya   {group_next_str}\n"
@@ -474,10 +551,35 @@ def cmd_groupclaim(cid, token):
     else:
         send(cid, "❌ Group mining claim failed. Check logs.", token)
 
+
+def cmd_recovery(cid, token):
+    """Force check and attempt recovery burn claim (full Indonesian)."""
+    cfg = load_config()
+    tk = get_valid_token(cfg)
+    if not tk:
+        send(cid, "❌ Token tidak valid.", token)
+        return
+    device_id = cfg.get("deviceId", "")
+    send(cid, "♻️ Cek pemulihan burn...", token)
+    can, total = itlg.check_recovery(tk, device_id)
+    if not can or total <= 0:
+        send(cid, f"ℹ️ Tidak ada yang bisa dipulihkan saat ini. Total: {total} ITLG", token)
+        return
+    burns = itlg.get_recoverable_burns(tk, device_id)
+    send(cid, f"✅ Ditemukan {len(burns)} burn yang bisa dipulihkan. Total ~{total} ITLG. Mencoba pemulihan...", token)
+    # Use bot.py logic
+    tk2, recovered = itlg.attempt_recovery(cfg, tk)
+    if recovered > 0:
+        send(cid, f"✅ Pemulihan berhasil +{recovered} ITLG!", token)
+    else:
+        send(cid, "⚠️ Cek pemulihan lolos tapi klaim gagal (mungkin belum unlock cycle). Cek log.", token)
+
+
 COMMANDS = {
     "/start": cmd_start, "/help": cmd_help, "/status": cmd_status,
     "/balance": cmd_balance, "/claim": cmd_claim,
     "/groupclaim": cmd_groupclaim,
+    "/recovery": cmd_recovery,
     "/stop": cmd_stop, "/restart": cmd_restart,
 }
 
