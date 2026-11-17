@@ -14,6 +14,27 @@ Auto claim ITLG dari Interlink Labs. Mining 4 jam, group mining, recovery otomat
 Satu script Python. Login sekali pakai OTP atau selfie, lalu klaim selamanya. Notifikasi Telegram full Indonesia.
 
 
+## 🐳 Docker + Web UI (Multi-Account)
+
+Versi Docker menyertakan **UI konfigurasi & monitoring berbasis web** yang modern dan
+responsif (desktop & mobile), **multi-akun Interlink**, serta **login UserGate**
+(akun pertama yang login menjadi administrator permanen; akun lain ditolak selamanya).
+Jika API key UserGate kosong, aplikasi otomatis berjalan **tanpa login** (mode lokal).
+Mode bisa diatur lewat `AUTH_MODE=auto|usergate|none` atau halaman Pengaturan.
+
+```bash
+cp .env.example .env          # isi USERGATE_API_KEY (opsional; kosong = tanpa login)
+docker compose up -d --build
+```
+
+Buka `http://IP_SERVER:8000`. Lihat panduan lengkap di
+[**README-DOCKER.md**](README-DOCKER.md).
+
+Fitur UI: dashboard saldo & countdown mining/group, kontrol start/stop/restart/klaim,
+login OTP & face, log real-time, monitoring CPU/RAM/disk, audit log, dan manajemen
+multi-akun dengan secret terenkripsi.
+
+
 ## What's New in v2.2
 
 - Full bahasa Indonesia di semua notifikasi Telegram dan log

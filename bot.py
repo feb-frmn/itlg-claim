@@ -14,7 +14,7 @@ Login sekali saja, klaim selamanya. Notif Telegram full bahasa Indonesia.
 Config: config.json (jalankan `python setup.py` untuk setup interaktif)
 """
 
-import sys, os, json, time, imaplib, email, re, hashlib, base64, argparse, random, random
+import sys, os, json, time, imaplib, email, re, hashlib, base64, argparse, random, threading
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 
@@ -33,7 +33,7 @@ def fmt_wib(fmt="%Y-%m-%d %H:%M:%S"):
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-API_BASE   = "https://prod.interlinklabs.ai/api/v1"
+API_BASE   = os.environ.get("ITLG_API_BASE") or "https://prod.interlinklabs.ai/api/v1"
 APP_VER    = "5.0.5"  # v2.2 full Indonesian + bug fixes
 CLAIM_INTERVAL = 4 * 60 * 60
 OTP_TIMEOUT    = 180  # 3 minutes — Interlink can be slow to send OTP
@@ -44,6 +44,56 @@ CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.json")
 TOKEN_FILE  = os.path.join(SCRIPT_DIR, "token.json")
 STATE_FILE  = os.path.join(SCRIPT_DIR, "claim_state.json")
 
+# ─── Thread-local context (multi-account support) ─────────────────────────────
+# Every thread (one per Interlink account in the web engine) gets its own file
+# paths. CLI usage keeps the defaults above.
+_ctx = threading.local()
+
+def set_context(config_file=None, token_file=None, token_backup=None,
+                state_file=None, log_file=None):
+    """Set file paths for the current thread. No args = CLI defaults."""
+    _ctx.config_file  = config_file  or CONFIG_FILE
+    _ctx.token_file   = token_file   or TOKEN_FILE
+    _ctx.token_backup = token_backup or os.path.join(SCRIPT_DIR, "token-backup.json")
+    _ctx.state_file   = state_file   or STATE_FILE
+    _ctx.log_file     = log_file     or LOG_FILE
+
+def get_context():
+    """Return the current thread's context, initialising defaults if needed."""
+    if not hasattr(_ctx, "config_file"):
+        set_context()
+    return {
+        "config_file":  _ctx.config_file,
+        "token_file":   _ctx.token_file,
+        "token_backup": _ctx.token_backup,
+        "state_file":   _ctx.state_file,
+        "log_file":     _ctx.log_file,
+    }
+
+def reset_context():
+    """Clear thread-local overrides (next access falls back to defaults)."""
+    for key in ("config_file", "token_file", "token_backup", "state_file", "log_file"):
+        if hasattr(_ctx, key):
+            delattr(_ctx, key)
+
+def _ensure_ctx():
+    if not hasattr(_ctx, "config_file"):
+        set_context()
+
+def _atomic_write_json(path, data, chmod=0o600):
+    """Write JSON atomically (temp file + rename) to avoid corrupt reads."""
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    tmp = f"{path}.tmp.{os.getpid()}.{threading.get_ident()}"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, path)
+    try:
+        os.chmod(path, chmod)
+    except Exception:
+        pass
+
 # ─── Colors ───────────────────────────────────────────────────────────────────
 class C:
     R = "\033[0m";  B = "\033[1m"
@@ -53,33 +103,38 @@ class C:
 
 def log(ok, msg):
     icon = {"ok":"✅","err":"❌","warn":"⚠️","info":"ℹ️","step":"➡️"}[ok]
-    line = f"{icon} {msg}"
-    if ok == "err":   line = f"{C.RED}{line}{C.R}"
-    elif ok == "ok":  line = f"{C.GR}{line}{C.R}"
-    elif ok == "warn": line = f"{C.YLW}{line}{C.R}"
-    elif ok == "info": line = f"{C.DIM}{line}{C.R}"
-    elif ok == "step": line = f"{C.CY}{line}{C.R}"
+    plain = f"{icon} {msg}"
+    line = plain
+    if ok == "err":   line = f"{C.RED}{plain}{C.R}"
+    elif ok == "ok":  line = f"{C.GR}{plain}{C.R}"
+    elif ok == "warn": line = f"{C.YLW}{plain}{C.R}"
+    elif ok == "info": line = f"{C.DIM}{plain}{C.R}"
+    elif ok == "step": line = f"{C.CY}{plain}{C.R}"
     print(line)
-    # ─── File logging (BUG M fix) ───
+    # ─── File logging (plain text, no ANSI) ───
+    _ensure_ctx()
     try:
         ts = now_wib().strftime("%Y-%m-%d %H:%M:%S")
-        with open(LOG_FILE, "a") as f:
-            f.write(f"[{ts}] {line}\n")
+        directory = os.path.dirname(_ctx.log_file)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(_ctx.log_file, "a") as f:
+            f.write(f"[{ts}] {plain}\n")
     except Exception:
         pass
 
 # ─── Config loader ─────────────────────────────────────────────────────────────
 def load_config():
-    if not os.path.exists(CONFIG_FILE):
+    _ensure_ctx()
+    if not os.path.exists(_ctx.config_file):
         log("err", "config.json tidak ditemukan. Jalankan: python setup.py")
         sys.exit(1)
-    with open(CONFIG_FILE) as f:
+    with open(_ctx.config_file) as f:
         cfg = json.load(f)
     if not cfg.get("deviceId"):
         import secrets
         cfg["deviceId"] = secrets.token_hex(8)
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(cfg, f, indent=2)
+        _atomic_write_json(_ctx.config_file, cfg)
     if not cfg.get("deviceModel"):
         devices = [
             ("Redmi Note 8 Pro", "XiaoMi"), ("Redmi Note 11", "XiaoMi"),
@@ -91,21 +146,20 @@ def load_config():
         dev = random.choice(devices)
         cfg["deviceModel"] = dev[0]
         cfg["deviceBrand"] = dev[1]
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(cfg, f, indent=2)
+        _atomic_write_json(_ctx.config_file, cfg)
     return cfg
 
 # ─── Token store ────────────────────────────────────────────────────────────────
 def save_tokens(access, refresh):
+    _ensure_ctx()
     data = {"access": access, "refresh": refresh or "", "saved_at": int(time.time())}
-    for path in (TOKEN_FILE, os.path.join(SCRIPT_DIR, "token-backup.json")):
-        with open(path, "w") as f:
-            json.dump(data, f)
-        os.chmod(path, 0o600)
+    for path in (_ctx.token_file, _ctx.token_backup):
+        _atomic_write_json(path, data)
 
 def load_tokens():
+    _ensure_ctx()
     try:
-        with open(TOKEN_FILE) as f:
+        with open(_ctx.token_file) as f:
             data = json.load(f)
         return data.get("access"), data.get("refresh")
     except (FileNotFoundError, json.JSONDecodeError):
@@ -113,6 +167,7 @@ def load_tokens():
 
 # ─── Claim state (actual claim amounts) ───────────────────────────────────────
 def save_claim_state(claimed=None, balance=None):
+    _ensure_ctx()
     state = load_claim_state()
     if claimed is not None:
         state["last_claim"] = claimed
@@ -121,15 +176,14 @@ def save_claim_state(claimed=None, balance=None):
         state["balance"] = balance
     state["updated_at"] = int(time.time())
     try:
-        with open(STATE_FILE, "w") as f:
-            json.dump(state, f, indent=2)
-        os.chmod(STATE_FILE, 0o600)
+        _atomic_write_json(_ctx.state_file, state)
     except Exception:
         pass
 
 def load_claim_state():
+    _ensure_ctx()
     try:
-        with open(STATE_FILE) as f:
+        with open(_ctx.state_file) as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {"history": [], "last_claim": 0, "balance": 0}
@@ -1070,21 +1124,22 @@ def run_loop(cfg):
 def cleanup_old_files(max_age_days=2):
     """Delete log entries older than max_age_days."""
     import glob
+    _ensure_ctx()
     now = time.time()
     cutoff = now - (max_age_days * 86400)
 
-    if os.path.exists(LOG_FILE):
+    if os.path.exists(_ctx.log_file):
         try:
-            with open(LOG_FILE, "r") as f:
+            with open(_ctx.log_file, "r") as f:
                 lines = f.readlines()
             if len(lines) > 500:
-                with open(LOG_FILE, "w") as f:
+                with open(_ctx.log_file, "w") as f:
                     f.writelines(lines[-500:])
         except Exception:
             pass
 
-    for pattern in ["token-backup-*.json", "claim_state-*.json"]:
-        for f in glob.glob(os.path.join(SCRIPT_DIR, pattern)):
+    for pattern in ["*.backup.json"]:
+        for f in glob.glob(os.path.join(os.path.dirname(_ctx.token_file), pattern)):
             try:
                 if os.path.getmtime(f) < cutoff:
                     os.remove(f)
@@ -1150,10 +1205,11 @@ def show_status():
         bot_status = "❓ Tidak tahu"
 
     cfg = load_config()
-    if not os.path.exists(TOKEN_FILE) and os.path.exists(os.path.join(SCRIPT_DIR, "token-backup.json")):
+    _ensure_ctx()
+    if not os.path.exists(_ctx.token_file) and os.path.exists(_ctx.token_backup):
         import shutil
-        shutil.copy2(os.path.join(SCRIPT_DIR, "token-backup.json"), TOKEN_FILE)
-        os.chmod(TOKEN_FILE, 0o600)
+        shutil.copy2(_ctx.token_backup, _ctx.token_file)
+        os.chmod(_ctx.token_file, 0o600)
     token = get_session(cfg, allow_login=False)
 
     mining_next_str = "N/A"

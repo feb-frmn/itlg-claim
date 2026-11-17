@@ -17,3 +17,7 @@ node_modules/
 results_community.json
 cookies.json
 .env
+data/
+.secret
+app.db
+/plan
